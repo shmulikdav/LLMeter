@@ -1,5 +1,9 @@
 # llm-cost-meter
 
+[![npm version](https://img.shields.io/npm/v/llm-cost-meter.svg)](https://www.npmjs.com/package/llm-cost-meter)
+[![license](https://img.shields.io/npm/l/llm-cost-meter.svg)](https://github.com/shmulikdav/llmeter/blob/main/LICENSE)
+[![node](https://img.shields.io/node/v/llm-cost-meter.svg)](https://nodejs.org)
+
 **Per-feature, per-user LLM cost attribution for production AI apps.**
 
 Every team running AI in production knows their monthly bill. No team knows which feature is responsible for which cost. `llm-cost-meter` wraps your LLM API calls, calculates actual cost from token usage, and tags every call by feature, user, and environment — so you can finally see where the money goes.
