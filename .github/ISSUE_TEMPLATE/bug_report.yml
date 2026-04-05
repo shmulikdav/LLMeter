@@ -1,0 +1,75 @@
+name: Bug Report
+description: Report a bug in llm-cost-meter
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug. Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "When I call meter() with..., I expected..., but instead..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code to reproduce the issue.
+      render: typescript
+      placeholder: |
+        import { meter, configure } from 'llm-cost-meter';
+
+        configure({ adapters: ['console'] });
+
+        const response = await meter(
+          () => client.messages.create({ ... }),
+          { feature: 'my-feature' }
+        );
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: llm-cost-meter version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM Provider
+      options:
+        - Anthropic
+        - OpenAI
+        - Both
+        - Other / Custom
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: "v20.11.0"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other context, error messages, or screenshots.

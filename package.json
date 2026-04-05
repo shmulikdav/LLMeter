@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/shmulikdav/llmeter.git"
+    "url": "https://github.com/shmulikdav/LLMeter.git"
   },
   "type": "commonjs",
   "engines": {
