@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>llm-cost-meter — Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #242734;
+      --border: #2e3140;
+      --text: #e4e4e7;
+      --text-muted: #8b8fa3;
+      --accent: #6366f1;
+      --accent2: #818cf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --cyan: #06b6d4;
+      --pink: #ec4899;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    .header h1 span { color: var(--accent2); }
+
+    .header-meta {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .header-meta strong { color: var(--text); font-weight: 500; }
+
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px 32px;
+    }
+
+    /* KPI Cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .kpi-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -1px;
+    }
+
+    .kpi-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Charts row */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .chart-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text);
+    }
+
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* Tables */
+    .table-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .table-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      font-weight: 500;
+      color: var(--text-muted);
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    th:not(:first-child) { text-align: right; }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+
+    tr:last-child td { border-bottom: none; }
+
+    .feature-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .cost-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cost-bar-fill {
+      height: 6px;
+      border-radius: 3px;
+      background: var(--accent);
+    }
+
+    /* Event log */
+    .event-log {
+      max-height: 340px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+
+    .event-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 120px 100px 80px 90px;
+      font-size: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+
+    .event-row:hover { background: var(--surface2); }
+
+    .event-time { color: var(--text-muted); }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .pill-anthropic { background: rgba(236,72,153,0.15); color: var(--pink); }
+    .pill-openai { background: rgba(6,182,212,0.15); color: var(--cyan); }
+
+    .footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Loading */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 60vh;
+      font-size: 16px;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 768px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+      .charts-row { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="loading">Loading events...</div>
+  </div>
+
+  <script>
+    const COLORS = ['#6366f1', '#06b6d4', '#22c55e', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#14b8a6'];
+
+    function fmtCost(n) {
+      if (n === 0) return '$0.00';
+      if (n < 0.01) return '$' + n.toFixed(5);
+      if (n < 1) return '$' + n.toFixed(4);
+      return '$' + n.toFixed(2);
+    }
+
+    function fmtNum(n) { return n.toLocaleString('en-US'); }
+
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function groupBy(events, key) {
+      const map = {};
+      events.forEach(e => {
+        const k = e[key] || 'unknown';
+        if (!map[k]) map[k] = [];
+        map[k].push(e);
+      });
+      return map;
+    }
+
+    function renderDashboard(events) {
+      const totalCost = events.reduce((s, e) => s + e.totalCostUSD, 0);
+      const totalTokens = events.reduce((s, e) => s + e.totalTokens, 0);
+      const totalCalls = events.length;
+      const avgCost = totalCalls > 0 ? totalCost / totalCalls : 0;
+
+      const byFeature = groupBy(events, 'feature');
+      const byUser = groupBy(events, 'userId');
+      const byModel = groupBy(events, 'model');
+      const byProvider = groupBy(events, 'provider');
+
+      const featureRows = Object.entries(byFeature).map(([k, evts]) => ({
+        name: k,
+        calls: evts.length,
+        tokens: evts.reduce((s, e) => s + e.totalTokens, 0),
+        cost: evts.reduce((s, e) => s + e.totalCostUSD, 0),
+      })).sort((a, b) => b.cost - a.cost);
+
+      const userRows = Object.entries(byUser).map(([k, evts]) => ({
+        name: k,
+        calls: evts.length,
+        tokens: evts.reduce((s, e) => s + e.totalTokens, 0),
+        cost: evts.reduce((s, e) => s + e.totalCostUSD, 0),
+      })).sort((a, b) => b.cost - a.cost);
+
+      const modelRows = Object.entries(byModel).map(([k, evts]) => ({
+        name: k,
+        calls: evts.length,
+        tokens: evts.reduce((s, e) => s + e.totalTokens, 0),
+        cost: evts.reduce((s, e) => s + e.totalCostUSD, 0),
+      })).sort((a, b) => b.cost - a.cost);
+
+      const maxFeatureCost = featureRows[0]?.cost || 1;
+
+      document.getElementById('app').innerHTML = `
+        <div class="header">
+          <h1><span>llm-cost-meter</span> Dashboard</h1>
+          <div class="header-meta">
+            <strong>${fmtNum(totalCalls)}</strong> events tracked &nbsp;·&nbsp;
+            <strong>${Object.keys(byProvider).join(', ')}</strong> &nbsp;·&nbsp;
+            <strong>${Object.keys(byModel).length}</strong> models
+          </div>
+        </div>
+
+        <div class="container">
+          <!-- KPIs -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Total Spend</div>
+              <div class="kpi-value" style="color: var(--accent2)">${fmtCost(totalCost)}</div>
+              <div class="kpi-sub">${fmtNum(totalCalls)} API calls</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Avg Cost / Call</div>
+              <div class="kpi-value">${fmtCost(avgCost)}</div>
+              <div class="kpi-sub">across ${Object.keys(byFeature).length} features</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Total Tokens</div>
+              <div class="kpi-value">${fmtNum(totalTokens)}</div>
+              <div class="kpi-sub">input + output</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Most Expensive</div>
+              <div class="kpi-value" style="color: var(--amber); font-size: 22px;">${featureRows[0]?.name || '—'}</div>
+              <div class="kpi-sub">${fmtCost(featureRows[0]?.cost || 0)} · ${((featureRows[0]?.cost || 0) / totalCost * 100).toFixed(0)}% of total</div>
+            </div>
+          </div>
+
+          <!-- Charts -->
+          <div class="charts-row">
+            <div class="chart-card">
+              <h3>Cost by Feature</h3>
+              <div class="chart-container"><canvas id="chartFeatureCost"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h3>Calls by Model</h3>
+              <div class="chart-container"><canvas id="chartModelCalls"></canvas></div>
+            </div>
+          </div>
+
+          <div class="charts-row">
+            <div class="chart-card">
+              <h3>Cost by User</h3>
+              <div class="chart-container"><canvas id="chartUserCost"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h3>Cost vs Calls per Feature</h3>
+              <div class="chart-container"><canvas id="chartCostVsCalls"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Feature table -->
+          <div class="table-card">
+            <h3>Cost Breakdown by Feature</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Calls</th>
+                  <th>Total Tokens</th>
+                  <th>Avg Cost/Call</th>
+                  <th>Total Cost</th>
+                  <th style="width: 200px">Share</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${featureRows.map((r, i) => `
+                  <tr>
+                    <td><span class="feature-badge" style="background: ${COLORS[i % COLORS.length]}22; color: ${COLORS[i % COLORS.length]}">${r.name}</span></td>
+                    <td>${fmtNum(r.calls)}</td>
+                    <td>${fmtNum(r.tokens)}</td>
+                    <td>${fmtCost(r.cost / r.calls)}</td>
+                    <td><strong>${fmtCost(r.cost)}</strong></td>
+                    <td>
+                      <div class="cost-bar">
+                        <div class="cost-bar-fill" style="width: ${(r.cost / maxFeatureCost) * 160}px; background: ${COLORS[i % COLORS.length]}"></div>
+                        <span style="color: var(--text-muted); font-size: 11px">${(r.cost / totalCost * 100).toFixed(1)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- User table -->
+          <div class="table-card">
+            <h3>Cost Breakdown by User</h3>
+            <table>
+              <thead>
+                <tr><th>User</th><th>Calls</th><th>Tokens</th><th>Total Cost</th></tr>
+              </thead>
+              <tbody>
+                ${userRows.map(r => `
+                  <tr>
+                    <td>${r.name}</td>
+                    <td>${fmtNum(r.calls)}</td>
+                    <td>${fmtNum(r.tokens)}</td>
+                    <td><strong>${fmtCost(r.cost)}</strong></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Recent events -->
+          <div class="table-card">
+            <h3>Recent Events</h3>
+            <div class="event-log">
+              <div class="event-row" style="font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                <div>Time</div><div>Feature</div><div>Model</div><div>User</div><div>Tokens</div><div>Cost</div>
+              </div>
+              ${events.slice().reverse().map(e => `
+                <div class="event-row">
+                  <div class="event-time">${fmtTime(e.timestamp)}</div>
+                  <div>${e.feature || 'untagged'}</div>
+                  <div><span class="pill pill-${e.provider}">${e.model.split('-').slice(0,2).join('-')}</span></div>
+                  <div style="color: var(--text-muted)">${e.userId || '—'}</div>
+                  <div>${fmtNum(e.totalTokens)}</div>
+                  <div><strong>${fmtCost(e.totalCostUSD)}</strong></div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div class="footer">
+          llm-cost-meter v0.1.0 — Per-feature, per-user LLM cost attribution
+        </div>
+      `;
+
+      // ── Charts ──
+      const chartDefaults = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#8b8fa3', font: { size: 11 } } },
+        },
+      };
+
+      // Cost by Feature — Doughnut
+      new Chart(document.getElementById('chartFeatureCost'), {
+        type: 'doughnut',
+        data: {
+          labels: featureRows.map(r => r.name),
+          datasets: [{
+            data: featureRows.map(r => +r.cost.toFixed(6)),
+            backgroundColor: featureRows.map((_, i) => COLORS[i % COLORS.length]),
+            borderWidth: 0,
+            hoverOffset: 6,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          cutout: '65%',
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { position: 'right', labels: { color: '#8b8fa3', font: { size: 11 }, padding: 12 } },
+          },
+        }
+      });
+
+      // Calls by Model — Horizontal Bar
+      new Chart(document.getElementById('chartModelCalls'), {
+        type: 'bar',
+        data: {
+          labels: modelRows.map(r => r.name),
+          datasets: [{
+            label: 'Calls',
+            data: modelRows.map(r => r.calls),
+            backgroundColor: modelRows.map((_, i) => COLORS[i % COLORS.length] + 'cc'),
+            borderRadius: 4,
+            barThickness: 28,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          indexAxis: 'y',
+          scales: {
+            x: { grid: { color: '#2e3140' }, ticks: { color: '#8b8fa3' } },
+            y: { grid: { display: false }, ticks: { color: '#e4e4e7', font: { size: 11 } } },
+          },
+          plugins: { ...chartDefaults.plugins, legend: { display: false } },
+        }
+      });
+
+      // Cost by User — Bar
+      new Chart(document.getElementById('chartUserCost'), {
+        type: 'bar',
+        data: {
+          labels: userRows.map(r => r.name),
+          datasets: [{
+            label: 'Cost (USD)',
+            data: userRows.map(r => +r.cost.toFixed(6)),
+            backgroundColor: userRows.map((_, i) => COLORS[i % COLORS.length] + 'cc'),
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            x: { grid: { display: false }, ticks: { color: '#e4e4e7', font: { size: 11 } } },
+            y: { grid: { color: '#2e3140' }, ticks: { color: '#8b8fa3', callback: v => '$' + v } },
+          },
+          plugins: { ...chartDefaults.plugins, legend: { display: false } },
+        }
+      });
+
+      // Cost vs Calls — Bubble
+      new Chart(document.getElementById('chartCostVsCalls'), {
+        type: 'bubble',
+        data: {
+          datasets: featureRows.map((r, i) => ({
+            label: r.name,
+            data: [{ x: r.calls, y: +r.cost.toFixed(6), r: Math.max(6, Math.sqrt(r.tokens / 50)) }],
+            backgroundColor: COLORS[i % COLORS.length] + 'aa',
+            borderColor: COLORS[i % COLORS.length],
+            borderWidth: 1,
+          }))
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            x: { title: { display: true, text: 'Number of Calls', color: '#8b8fa3' }, grid: { color: '#2e3140' }, ticks: { color: '#8b8fa3' } },
+            y: { title: { display: true, text: 'Total Cost (USD)', color: '#8b8fa3' }, grid: { color: '#2e3140' }, ticks: { color: '#8b8fa3', callback: v => '$' + v } },
+          },
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { position: 'top', labels: { color: '#8b8fa3', font: { size: 11 }, usePointStyle: true, pointStyle: 'circle' } },
+          }
+        }
+      });
+    }
+
+    // ── Load data ──
+    fetch('/api/events')
+      .then(r => r.json())
+      .then(events => renderDashboard(events))
+      .catch(() => {
+        document.getElementById('app').innerHTML = `
+          <div class="loading" style="flex-direction: column; gap: 12px;">
+            <div>Could not load events.</div>
+            <div style="font-size: 13px;">Make sure the server is running: <code>npx ts-node dashboard/server.ts</code></div>
+          </div>`;
+      });
+  </script>
+</body>
+</html>

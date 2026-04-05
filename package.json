@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "demo": "ts-node demo.ts",
+    "dashboard": "ts-node dashboard/server.ts",
     "test": "jest",
     "prepublishOnly": "npm run build"
   },
