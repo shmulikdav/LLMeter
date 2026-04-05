@@ -97,3 +97,13 @@ export interface MeterStats {
   adapterErrors: number;
   unknownModels: Set<string>;
 }
+
+// ── Express Middleware Types ────────────────────────────────────
+
+export interface ExpressMiddlewareOptions {
+  feature: string;
+  extractUserId?: (req: any) => string | undefined;
+  extractSessionId?: (req: any) => string | undefined;
+  env?: string;
+  tags?: Record<string, string>;
+}
