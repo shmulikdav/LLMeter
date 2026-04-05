@@ -2,6 +2,21 @@
   "name": "llm-cost-meter",
   "version": "0.1.0",
   "description": "Per-feature, per-user cost attribution and reporting for LLM API calls",
+  "author": "shmulikdav",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shmulikdav/llmeter.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

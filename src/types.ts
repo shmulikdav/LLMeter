@@ -17,12 +17,16 @@ export interface CostEvent {
   tags?: Record<string, string>;
 }
 
+export type ErrorHandler = (error: Error, event?: CostEvent) => void;
+
 export interface MeterOptions {
   feature?: string;
   userId?: string;
   sessionId?: string;
   env?: string;
   tags?: Record<string, string>;
+  /** If true, await adapter writes before returning. Default: false (fire-and-forget). */
+  awaitWrites?: boolean;
 }
 
 export interface CostMeterConfig {
@@ -32,6 +36,8 @@ export interface CostMeterConfig {
   defaultTags?: Record<string, string>;
   currency?: string;
   verbose?: boolean;
+  /** Called when an adapter write fails. If not set, errors are logged when verbose=true. */
+  onError?: ErrorHandler;
 }
 
 export interface GlobalConfig {
@@ -40,11 +46,17 @@ export interface GlobalConfig {
   defaultTags: Record<string, string>;
   currency: string;
   verbose: boolean;
+  /** Called when an adapter write fails. If not set, errors are logged when verbose=true. */
+  onError?: ErrorHandler;
+  /** If true, warn to console when a model is not found in the pricing table. Default: true. */
+  warnOnMissingModel: boolean;
 }
 
 export interface CostAdapter {
   name: string;
   write(event: CostEvent): Promise<void>;
+  /** Optional cleanup method called on flush/shutdown. */
+  flush?(): Promise<void>;
 }
 
 export interface ModelPricing {
@@ -75,4 +87,11 @@ export interface ReportOptions {
   top?: number;
   format?: 'table' | 'csv' | 'json';
   file?: string;
+}
+
+export interface MeterStats {
+  eventsTracked: number;
+  eventsDropped: number;
+  adapterErrors: number;
+  unknownModels: Set<string>;
 }

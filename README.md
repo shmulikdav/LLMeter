@@ -10,6 +10,8 @@ Every team running AI in production knows their monthly bill. No team knows whic
 npm install llm-cost-meter
 ```
 
+Requires Node.js >= 18.
+
 ## Quick Start (60 seconds)
 
 ### 1. Wrap your LLM call
@@ -108,32 +110,133 @@ configure({
     env: process.env.NODE_ENV ?? 'development',
     service: 'my-app',
   },
-  verbose: false,                        // true = log errors to console
+  verbose: false,                        // true = log adapter errors to console
+  warnOnMissingModel: true,              // true = warn when model not in pricing table
+  onError: (err, event) => {             // Called when adapter writes fail
+    myLogger.warn('Cost tracking error', { err, feature: event?.feature });
+  },
+});
+```
+
+`configure()` merges with the current config. To start fresh, call `resetConfig()` first:
+
+```typescript
+import { resetConfig, configure } from 'llm-cost-meter';
+
+resetConfig();  // Back to defaults
+configure({ adapters: ['local'] });
+```
+
+## Error Handling
+
+By default, adapter errors are silent (your LLM calls are never affected). To catch them:
+
+```typescript
+// Option 1: onError callback (recommended for production)
+configure({
+  onError: (err, event) => {
+    console.error('Failed to write cost event:', err.message);
+    // Send to your error tracker, Sentry, DataDog, etc.
+  },
+});
+
+// Option 2: verbose mode (logs to console.error)
+configure({ verbose: true });
+
+// Option 3: await writes to guarantee persistence
+const response = await meter(llmCall, {
+  feature: 'billing-critical',
+  awaitWrites: true,  // Will throw if adapter fails
+});
+```
+
+### Monitoring meter health
+
+```typescript
+import { getMeterStats } from 'llm-cost-meter';
+
+const stats = getMeterStats();
+console.log(stats);
+// {
+//   eventsTracked: 1284,
+//   eventsDropped: 0,
+//   adapterErrors: 0,
+//   unknownModels: ['openai/ft:gpt-4o-mini:my-org']
+// }
+```
+
+## Custom Pricing
+
+Add pricing for fine-tuned models, new models, or entirely new providers:
+
+```typescript
+import { configurePricing, setPricingTable } from 'llm-cost-meter';
+
+// Add a single model
+configurePricing('openai', 'ft:gpt-4o-mini:my-org', { input: 0.30, output: 1.20 });
+
+// Add a new provider
+configurePricing('mistral', 'mistral-large', { input: 2.00, output: 6.00 });
+
+// Override existing pricing
+configurePricing('anthropic', 'claude-sonnet-4-20250514', { input: 3.50, output: 16.00 });
+
+// Set an entire provider at once
+setPricingTable('deepseek', {
+  'deepseek-chat': { input: 0.14, output: 0.28, unit: 'per_million_tokens' },
+  'deepseek-coder': { input: 0.14, output: 0.28, unit: 'per_million_tokens' },
+});
+```
+
+When a model isn't found in the pricing table, cost is reported as $0.00 and a warning is logged (disable with `warnOnMissingModel: false`).
+
+## Guaranteed Write Mode
+
+By default, `meter()` is fire-and-forget — adapter writes happen in the background so your LLM response is returned immediately. For billing-critical paths:
+
+```typescript
+// Wait for adapters to finish writing before continuing
+const response = await meter(llmCall, {
+  feature: 'billing',
+  awaitWrites: true,
+});
+
+// Flush all pending writes before process exit
+import { flush } from 'llm-cost-meter';
+
+process.on('SIGTERM', async () => {
+  await flush();
+  process.exit(0);
 });
 ```
 
 ## Advanced: CostMeter Class
 
-For apps that need instance-level configuration:
+Use `CostMeter` when you need multiple independent meters (e.g., different adapters for different teams, separate configs for billing vs analytics):
 
 ```typescript
 import { CostMeter } from 'llm-cost-meter';
 
-const meter = new CostMeter({
+const billingMeter = new CostMeter({
   provider: 'anthropic',
-  adapters: ['console', 'local'],
-  localPath: './.llm-costs/events.ndjson',
-  defaultTags: { env: 'production' },
+  adapters: ['local'],
+  localPath: './billing/events.ndjson',
+  onError: (err) => alertOps('billing tracking failed', err),
 });
 
-// Wrap a call
-const response = await meter.track(
+const analyticsMeter = new CostMeter({
+  adapters: [new DataDogAdapter()],
+  defaultTags: { team: 'analytics' },
+});
+
+// Each meter writes to its own destination
+const response = await billingMeter.track(
   () => client.messages.create({ ... }),
   { feature: 'chat', userId: req.user.id }
 );
 
-// Or record a manual event
-meter.record({
+// Manual event recording
+billingMeter.record({
   model: 'claude-sonnet-4-20250514',
   provider: 'anthropic',
   inputTokens: 450,
@@ -141,7 +244,14 @@ meter.record({
   feature: 'classifier',
   userId: 'user_123',
 });
+
+// Flush before shutdown
+await billingMeter.flush();
 ```
+
+**When to use `meter()` vs `CostMeter`:**
+- `meter()` — simple apps, single config, most use cases
+- `CostMeter` — multi-team apps, separate billing/analytics pipelines, multiple output destinations
 
 ## CLI Reference
 
@@ -186,7 +296,7 @@ configure({ adapters: ['console'] });
 
 ### Local File Adapter
 
-Appends events as NDJSON (newline-delimited JSON) to a file. Ideal for production.
+Appends events as NDJSON (newline-delimited JSON) to a file. Uses an async write queue to prevent file corruption from concurrent calls.
 
 ```typescript
 configure({
@@ -206,7 +316,6 @@ class DataDogAdapter implements CostAdapter {
   name = 'datadog';
 
   async write(event: CostEvent): Promise<void> {
-    // Send to DataDog, PostHog, Segment, etc.
     await fetch('https://api.datadoghq.com/api/v1/series', {
       method: 'POST',
       body: JSON.stringify({
@@ -217,6 +326,11 @@ class DataDogAdapter implements CostAdapter {
         }],
       }),
     });
+  }
+
+  // Optional: called by flush() before shutdown
+  async flush(): Promise<void> {
+    // Drain any internal buffers
   }
 }
 
@@ -280,6 +394,11 @@ Built-in pricing for current models (USD per million tokens):
 | claude-opus-4-20250514 | $15.00 | $75.00 |
 | claude-sonnet-4-20250514 | $3.00 | $15.00 |
 | claude-haiku-4-5-20251001 | $0.80 | $4.00 |
+| claude-3-5-sonnet-20241022 | $3.00 | $15.00 |
+| claude-3-5-haiku-20241022 | $0.80 | $4.00 |
+| claude-3-opus-20240229 | $15.00 | $75.00 |
+| claude-3-sonnet-20240229 | $3.00 | $15.00 |
+| claude-3-haiku-20240307 | $0.25 | $1.25 |
 
 ### OpenAI
 
@@ -288,26 +407,58 @@ Built-in pricing for current models (USD per million tokens):
 | gpt-4o | $2.50 | $10.00 |
 | gpt-4o-mini | $0.15 | $0.60 |
 | gpt-4-turbo | $10.00 | $30.00 |
+| gpt-4 | $30.00 | $60.00 |
 | gpt-3.5-turbo | $0.50 | $1.50 |
+| o1 | $15.00 | $60.00 |
+| o1-mini | $3.00 | $12.00 |
+| o3 | $10.00 | $40.00 |
+| o3-mini | $1.10 | $4.40 |
 
-Pricing tables are stored as JSON files in the package at `src/pricing/`. To update pricing, modify the JSON files and rebuild.
+Dated model variants (e.g., `gpt-4o-2024-08-06`) are also included. Use `configurePricing()` to add models not in this table.
+
+## Testing Your Code
+
+Use `resetConfig()` and `resetStats()` in test setup to avoid state leaking between tests:
+
+```typescript
+import { configure, resetConfig, resetStats, meter, CostAdapter, CostEvent } from 'llm-cost-meter';
+
+class TestAdapter implements CostAdapter {
+  name = 'test';
+  events: CostEvent[] = [];
+  async write(event: CostEvent) { this.events.push(event); }
+}
+
+beforeEach(() => {
+  resetConfig();
+  resetStats();
+  const adapter = new TestAdapter();
+  configure({ adapters: [adapter], warnOnMissingModel: false });
+});
+```
 
 ## FAQ
 
 **Does it add latency to my API calls?**
-No. The `meter()` wrapper records timing but does not add any delay. Cost events are emitted asynchronously after the response is returned.
+No. By default, adapter writes are fire-and-forget. Your LLM response is returned immediately. Use `awaitWrites: true` only when you need guaranteed persistence.
 
 **Does it send my data anywhere?**
 No. All data stays local by default. The `console` adapter prints to stdout and the `local` adapter writes to a file on disk. No network calls are made unless you add a custom adapter.
 
 **What happens if the pricing table doesn't have my model?**
-Cost will be reported as $0.00. The response is still passed through unchanged.
+A warning is logged (unless `warnOnMissingModel: false`) and cost is reported as $0.00. Use `configurePricing()` to add the model. Check `getMeterStats().unknownModels` to see which models are missing.
+
+**What if an adapter fails?**
+By default, errors are silent — your app is never affected. Use `onError` callback or `verbose: true` to catch errors. Use `getMeterStats().adapterErrors` to monitor.
 
 **Can I use it with streaming responses?**
-V1 does not support streaming token counting. Streaming support is planned for V2.
+V1 does not support streaming token counting. Streaming support is planned for V2. For now, check the final response's usage field after streaming completes.
 
 **Does it work with fine-tuned models?**
-V1 uses the base model pricing table. Custom model pricing is planned for a future release.
+Yes. Use `configurePricing()` to set pricing for your fine-tuned model IDs.
+
+**Is it safe for high-traffic apps?**
+The local file adapter uses an async write queue that serializes writes — no file corruption from concurrent calls. For high-throughput, consider a custom adapter that batches writes.
 
 ## License
 

@@ -105,6 +105,36 @@ describe('LocalAdapter', () => {
     expect(JSON.parse(lines[0]).id).toBe('evt-1');
     expect(JSON.parse(lines[2]).id).toBe('evt-3');
   });
+
+  it('handles concurrent writes without corruption', async () => {
+    const filePath = path.join(tmpDir, 'concurrent.ndjson');
+    const adapter = new LocalAdapter(filePath);
+
+    // Fire 20 writes concurrently
+    const writes = Array.from({ length: 20 }, (_, i) =>
+      adapter.write(makeMockEvent({ id: `concurrent-${i}` }))
+    );
+    await Promise.all(writes);
+
+    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(20);
+    // All should be valid JSON
+    for (const line of lines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+  });
+
+  it('flush() waits for pending writes', async () => {
+    const filePath = path.join(tmpDir, 'flush.ndjson');
+    const adapter = new LocalAdapter(filePath);
+
+    adapter.write(makeMockEvent({ id: 'flush-1' }));
+    adapter.write(makeMockEvent({ id: 'flush-2' }));
+    await adapter.flush();
+
+    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+  });
 });
 
 describe('createAdapter', () => {

@@ -1,4 +1,16 @@
-import { meter, CostMeter, configure, getConfig, CostAdapter, CostEvent } from '../src';
+import {
+  meter,
+  CostMeter,
+  configure,
+  getConfig,
+  resetConfig,
+  getMeterStats,
+  resetStats,
+  flush,
+  configurePricing,
+  CostAdapter,
+  CostEvent,
+} from '../src';
 
 // Capture adapter for testing
 class TestAdapter implements CostAdapter {
@@ -7,6 +19,16 @@ class TestAdapter implements CostAdapter {
 
   async write(event: CostEvent): Promise<void> {
     this.events.push(event);
+  }
+}
+
+// Failing adapter for error testing
+class FailingAdapter implements CostAdapter {
+  name = 'failing';
+  errors: Error[] = [];
+
+  async write(): Promise<void> {
+    throw new Error('Adapter write failed');
   }
 }
 
@@ -36,7 +58,9 @@ function mockUnknownResponse() {
   });
 }
 
-describe('configure and getConfig', () => {
+describe('configure, resetConfig, and getConfig', () => {
+  afterEach(() => resetConfig());
+
   it('sets and reads global config', () => {
     configure({
       adapters: ['console'],
@@ -49,10 +73,84 @@ describe('configure and getConfig', () => {
     expect(config.verbose).toBe(true);
   });
 
-  it('merges with defaults', () => {
-    configure({ verbose: false });
+  it('merges with current config', () => {
+    configure({ verbose: true });
+    configure({ localPath: '/tmp/x.ndjson' });
     const config = getConfig();
-    expect(config.currency).toBe('USD');
+    expect(config.verbose).toBe(true);
+    expect(config.localPath).toBe('/tmp/x.ndjson');
+  });
+
+  it('resetConfig() restores defaults', () => {
+    configure({ verbose: true, localPath: '/tmp/custom.ndjson' });
+    resetConfig();
+    const config = getConfig();
+    expect(config.verbose).toBe(false);
+    expect(config.localPath).toBe('./.llm-costs/events.ndjson');
+  });
+
+  it('warnOnMissingModel defaults to true', () => {
+    expect(getConfig().warnOnMissingModel).toBe(true);
+  });
+});
+
+describe('getMeterStats and resetStats', () => {
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('tracks events', async () => {
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+    await meter(mockOpenAIResponse(), { feature: 'test', awaitWrites: true });
+
+    const stats = getMeterStats();
+    expect(stats.eventsTracked).toBe(2);
+    expect(stats.eventsDropped).toBe(0);
+    expect(stats.adapterErrors).toBe(0);
+  });
+
+  it('tracks adapter errors', async () => {
+    const failing = new FailingAdapter();
+    configure({ adapters: [failing], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+
+    const stats = getMeterStats();
+    expect(stats.eventsTracked).toBe(1);
+    expect(stats.adapterErrors).toBe(1);
+  });
+
+  it('tracks unknown models', async () => {
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(
+      async () => ({
+        type: 'message' as const,
+        model: 'claude-totally-unknown',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        content: [],
+      }),
+      { feature: 'test', awaitWrites: true }
+    );
+
+    const stats = getMeterStats();
+    expect(stats.unknownModels).toContain('anthropic/claude-totally-unknown');
+  });
+
+  it('resetStats() clears counters', async () => {
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+    resetStats();
+
+    const stats = getMeterStats();
+    expect(stats.eventsTracked).toBe(0);
   });
 });
 
@@ -65,25 +163,26 @@ describe('meter()', () => {
       adapters: [testAdapter],
       defaultTags: {},
       verbose: false,
+      warnOnMissingModel: false,
     });
+    resetStats();
   });
 
+  afterEach(() => resetConfig());
+
   it('returns Anthropic response unchanged', async () => {
-    const response = await meter(mockAnthropicResponse(), { feature: 'test' });
+    const response = await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
     expect(response.type).toBe('message');
     expect(response.content[0].text).toBe('Hello!');
   });
 
   it('returns OpenAI response unchanged', async () => {
-    const response = await meter(mockOpenAIResponse(), { feature: 'test' });
+    const response = await meter(mockOpenAIResponse(), { feature: 'test', awaitWrites: true });
     expect(response.choices[0].message.content).toBe('Hi!');
   });
 
   it('detects Anthropic provider and extracts tokens', async () => {
-    await meter(mockAnthropicResponse(), { feature: 'test' });
-
-    // Wait for async adapter write
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
 
     expect(testAdapter.events).toHaveLength(1);
     const event = testAdapter.events[0];
@@ -95,8 +194,7 @@ describe('meter()', () => {
   });
 
   it('detects OpenAI provider and extracts tokens', async () => {
-    await meter(mockOpenAIResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockOpenAIResponse(), { feature: 'test', awaitWrites: true });
 
     const event = testAdapter.events[0];
     expect(event.provider).toBe('openai');
@@ -107,8 +205,7 @@ describe('meter()', () => {
   });
 
   it('handles unknown provider gracefully', async () => {
-    await meter(mockUnknownResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockUnknownResponse(), { feature: 'test', awaitWrites: true });
 
     const event = testAdapter.events[0];
     expect(event.provider).toBe('custom');
@@ -116,12 +213,9 @@ describe('meter()', () => {
   });
 
   it('calculates cost correctly', async () => {
-    await meter(mockAnthropicResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
 
     const event = testAdapter.events[0];
-    // claude-sonnet-4: input $3/M, output $15/M
-    // 1000 input = $0.003, 500 output = $0.0075
     expect(event.inputCostUSD).toBeCloseTo(0.003, 6);
     expect(event.outputCostUSD).toBeCloseTo(0.0075, 6);
     expect(event.totalCostUSD).toBeCloseTo(0.0105, 6);
@@ -134,8 +228,8 @@ describe('meter()', () => {
       sessionId: 'sess_1',
       env: 'test',
       tags: { team: 'eng' },
+      awaitWrites: true,
     });
-    await new Promise(r => setTimeout(r, 50));
 
     const event = testAdapter.events[0];
     expect(event.feature).toBe('chat');
@@ -149,13 +243,14 @@ describe('meter()', () => {
     configure({
       adapters: [testAdapter],
       defaultTags: { service: 'my-app', env: 'production' },
+      warnOnMissingModel: false,
     });
 
     await meter(mockAnthropicResponse(), {
       feature: 'test',
       tags: { extra: 'tag' },
+      awaitWrites: true,
     });
-    await new Promise(r => setTimeout(r, 50));
 
     const event = testAdapter.events[0];
     expect(event.tags?.service).toBe('my-app');
@@ -164,32 +259,118 @@ describe('meter()', () => {
 
   it('measures latency', async () => {
     const slowFn = async () => {
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 80));
       return { type: 'message' as const, model: 'test', usage: { input_tokens: 0, output_tokens: 0 }, content: [] };
     };
 
-    await meter(() => slowFn(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(() => slowFn(), { feature: 'test', awaitWrites: true });
 
     const event = testAdapter.events[0];
     expect(event.latencyMs).toBeGreaterThanOrEqual(70);
   });
 
   it('generates unique event IDs', async () => {
-    await meter(mockAnthropicResponse(), { feature: 'test' });
-    await meter(mockAnthropicResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
 
     expect(testAdapter.events[0].id).not.toBe(testAdapter.events[1].id);
   });
 
   it('sets ISO timestamp', async () => {
-    await meter(mockAnthropicResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
 
     const ts = testAdapter.events[0].timestamp;
-    expect(() => new Date(ts)).not.toThrow();
     expect(new Date(ts).toISOString()).toBe(ts);
+  });
+
+  it('awaitWrites: true waits for adapter', async () => {
+    let written = false;
+    const slowAdapter: CostAdapter = {
+      name: 'slow',
+      async write() {
+        await new Promise((r) => setTimeout(r, 50));
+        written = true;
+      },
+    };
+    configure({ adapters: [slowAdapter], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+    expect(written).toBe(true);
+  });
+
+  it('awaitWrites: false (default) does not wait', async () => {
+    let written = false;
+    const slowAdapter: CostAdapter = {
+      name: 'slow',
+      async write() {
+        await new Promise((r) => setTimeout(r, 100));
+        written = true;
+      },
+    };
+    configure({ adapters: [slowAdapter], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'test' });
+    expect(written).toBe(false); // Not yet — fire and forget
+  });
+});
+
+describe('onError callback', () => {
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('calls onError when adapter fails', async () => {
+    const errors: Array<{ err: Error; event?: CostEvent }> = [];
+    const failing = new FailingAdapter();
+
+    configure({
+      adapters: [failing],
+      onError: (err, event) => errors.push({ err, event }),
+      warnOnMissingModel: false,
+    });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].err.message).toBe('Adapter write failed');
+    expect(errors[0].event?.feature).toBe('test');
+  });
+
+  it('logs to console.error when verbose=true and no onError', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation();
+    const failing = new FailingAdapter();
+
+    configure({
+      adapters: [failing],
+      verbose: true,
+      warnOnMissingModel: false,
+    });
+
+    await meter(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+
+    expect(spy).toHaveBeenCalledWith(
+      '[llm-cost-meter] Error writing event:',
+      expect.any(Error)
+    );
+    spy.mockRestore();
+  });
+});
+
+describe('flush()', () => {
+  afterEach(() => resetConfig());
+
+  it('calls flush on adapters that support it', async () => {
+    let flushed = false;
+    const adapter: CostAdapter = {
+      name: 'test',
+      async write() {},
+      async flush() { flushed = true; },
+    };
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await flush();
+    expect(flushed).toBe(true);
   });
 });
 
@@ -198,19 +379,20 @@ describe('CostMeter class', () => {
 
   beforeEach(() => {
     testAdapter = new TestAdapter();
+    resetStats();
   });
 
-  it('track() works like meter() with instance config', async () => {
+  afterEach(() => resetConfig());
+
+  it('track() works with instance config', async () => {
     const costMeter = new CostMeter({
       adapters: [testAdapter],
       defaultTags: { env: 'test' },
     });
 
-    const response = await costMeter.track(mockAnthropicResponse(), { feature: 'chat' });
+    const response = await costMeter.track(mockAnthropicResponse(), { feature: 'chat', awaitWrites: true });
 
     expect(response.content[0].text).toBe('Hello!');
-    await new Promise(r => setTimeout(r, 50));
-
     expect(testAdapter.events).toHaveLength(1);
     expect(testAdapter.events[0].feature).toBe('chat');
     expect(testAdapter.events[0].tags?.env).toBe('test');
@@ -222,10 +404,24 @@ describe('CostMeter class', () => {
       adapters: [testAdapter],
     });
 
-    await costMeter.track(mockAnthropicResponse(), { feature: 'test' });
-    await new Promise(r => setTimeout(r, 50));
+    await costMeter.track(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
 
     expect(testAdapter.events[0].provider).toBe('anthropic');
+  });
+
+  it('track() with awaitWrites', async () => {
+    let written = false;
+    const slowAdapter: CostAdapter = {
+      name: 'slow',
+      async write() {
+        await new Promise((r) => setTimeout(r, 50));
+        written = true;
+      },
+    };
+    const costMeter = new CostMeter({ adapters: [slowAdapter] });
+
+    await costMeter.track(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+    expect(written).toBe(true);
   });
 
   it('record() creates event from manual data', async () => {
@@ -242,7 +438,7 @@ describe('CostMeter class', () => {
       userId: 'user_1',
     });
 
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(testAdapter.events).toHaveLength(1);
     const event = testAdapter.events[0];
@@ -264,8 +460,110 @@ describe('CostMeter class', () => {
       outputTokens: 50,
     });
 
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(testAdapter.events[0].provider).toBe('custom');
+  });
+
+  it('onError callback works on CostMeter', async () => {
+    const errors: Error[] = [];
+    const failing = new FailingAdapter();
+
+    const costMeter = new CostMeter({
+      adapters: [failing],
+      onError: (err) => errors.push(err),
+    });
+
+    await costMeter.track(mockAnthropicResponse(), { feature: 'test', awaitWrites: true });
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toBe('Adapter write failed');
+  });
+
+  it('flush() waits for pending writes', async () => {
+    let flushed = false;
+    const adapter: CostAdapter = {
+      name: 'test',
+      async write() {},
+      async flush() { flushed = true; },
+    };
+
+    const costMeter = new CostMeter({ adapters: [adapter] });
+    await costMeter.flush();
+    expect(flushed).toBe(true);
+  });
+});
+
+describe('unknown model warning', () => {
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('warns to console when warnOnMissingModel is true', async () => {
+    const spy = jest.spyOn(console, 'warn').mockImplementation();
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: true });
+
+    await meter(
+      async () => ({
+        type: 'message' as const,
+        model: 'claude-nonexistent-model',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        content: [],
+      }),
+      { feature: 'test', awaitWrites: true }
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining('claude-nonexistent-model')
+    );
+    spy.mockRestore();
+  });
+
+  it('suppresses warning when warnOnMissingModel is false', async () => {
+    const spy = jest.spyOn(console, 'warn').mockImplementation();
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(
+      async () => ({
+        type: 'message' as const,
+        model: 'claude-another-unknown',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        content: [],
+      }),
+      { feature: 'test', awaitWrites: true }
+    );
+
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
+describe('configurePricing integration', () => {
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('custom pricing works with meter()', async () => {
+    configurePricing('anthropic', 'my-fine-tuned-model', { input: 10.0, output: 30.0 });
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(
+      async () => ({
+        type: 'message' as const,
+        model: 'my-fine-tuned-model',
+        usage: { input_tokens: 1000, output_tokens: 500 },
+        content: [],
+      }),
+      { feature: 'test', awaitWrites: true }
+    );
+
+    const event = adapter.events[0];
+    expect(event.inputCostUSD).toBeCloseTo(0.01, 6);
+    expect(event.outputCostUSD).toBeCloseTo(0.015, 6);
   });
 });

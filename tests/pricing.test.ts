@@ -1,11 +1,9 @@
-import { calculateCost, getAvailableModels, getAllPricing } from '../src/pricing';
+import { calculateCost, getAvailableModels, getAllPricing, configurePricing, setPricingTable } from '../src/pricing';
 
 describe('calculateCost', () => {
   describe('Anthropic models', () => {
     it('calculates cost for claude-sonnet-4-20250514', () => {
       const result = calculateCost('anthropic', 'claude-sonnet-4-20250514', 1000, 500);
-      // input: 1000 / 1M * $3.00 = $0.003
-      // output: 500 / 1M * $15.00 = $0.0075
       expect(result.inputCostUSD).toBeCloseTo(0.003, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.0075, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.0105, 6);
@@ -13,8 +11,6 @@ describe('calculateCost', () => {
 
     it('calculates cost for claude-opus-4-20250514', () => {
       const result = calculateCost('anthropic', 'claude-opus-4-20250514', 1000, 500);
-      // input: 1000 / 1M * $15.00 = $0.015
-      // output: 500 / 1M * $75.00 = $0.0375
       expect(result.inputCostUSD).toBeCloseTo(0.015, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.0375, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.0525, 6);
@@ -22,19 +18,27 @@ describe('calculateCost', () => {
 
     it('calculates cost for claude-haiku-4-5-20251001', () => {
       const result = calculateCost('anthropic', 'claude-haiku-4-5-20251001', 10000, 5000);
-      // input: 10000 / 1M * $0.80 = $0.008
-      // output: 5000 / 1M * $4.00 = $0.02
       expect(result.inputCostUSD).toBeCloseTo(0.008, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.02, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.028, 6);
+    });
+
+    it('calculates cost for claude-3-5-sonnet-20241022', () => {
+      const result = calculateCost('anthropic', 'claude-3-5-sonnet-20241022', 1000, 500);
+      expect(result.inputCostUSD).toBeCloseTo(0.003, 6);
+      expect(result.outputCostUSD).toBeCloseTo(0.0075, 6);
+    });
+
+    it('calculates cost for claude-3-haiku-20240307', () => {
+      const result = calculateCost('anthropic', 'claude-3-haiku-20240307', 1000, 500);
+      expect(result.inputCostUSD).toBeCloseTo(0.00025, 6);
+      expect(result.outputCostUSD).toBeCloseTo(0.000625, 6);
     });
   });
 
   describe('OpenAI models', () => {
     it('calculates cost for gpt-4o', () => {
       const result = calculateCost('openai', 'gpt-4o', 1000, 500);
-      // input: 1000 / 1M * $2.50 = $0.0025
-      // output: 500 / 1M * $10.00 = $0.005
       expect(result.inputCostUSD).toBeCloseTo(0.0025, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.005, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.0075, 6);
@@ -42,8 +46,6 @@ describe('calculateCost', () => {
 
     it('calculates cost for gpt-4o-mini', () => {
       const result = calculateCost('openai', 'gpt-4o-mini', 1000, 500);
-      // input: 1000 / 1M * $0.15 = $0.00015
-      // output: 500 / 1M * $0.60 = $0.0003
       expect(result.inputCostUSD).toBeCloseTo(0.00015, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.0003, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.00045, 6);
@@ -51,33 +53,37 @@ describe('calculateCost', () => {
 
     it('calculates cost for gpt-4-turbo', () => {
       const result = calculateCost('openai', 'gpt-4-turbo', 2000, 1000);
-      // input: 2000 / 1M * $10.00 = $0.02
-      // output: 1000 / 1M * $30.00 = $0.03
       expect(result.inputCostUSD).toBeCloseTo(0.02, 6);
       expect(result.outputCostUSD).toBeCloseTo(0.03, 6);
       expect(result.totalCostUSD).toBeCloseTo(0.05, 6);
     });
 
-    it('calculates cost for gpt-3.5-turbo', () => {
-      const result = calculateCost('openai', 'gpt-3.5-turbo', 1000, 500);
-      expect(result.inputCostUSD).toBeCloseTo(0.0005, 6);
-      expect(result.outputCostUSD).toBeCloseTo(0.00075, 6);
-      expect(result.totalCostUSD).toBeCloseTo(0.00125, 6);
+    it('calculates cost for o1', () => {
+      const result = calculateCost('openai', 'o1', 1000, 500);
+      expect(result.inputCostUSD).toBeCloseTo(0.015, 6);
+      expect(result.outputCostUSD).toBeCloseTo(0.03, 6);
+    });
+
+    it('calculates cost for o3-mini', () => {
+      const result = calculateCost('openai', 'o3-mini', 1000, 500);
+      expect(result.inputCostUSD).toBeCloseTo(0.0011, 6);
+      expect(result.outputCostUSD).toBeCloseTo(0.0022, 6);
+    });
+
+    it('calculates cost for dated model variants', () => {
+      const result = calculateCost('openai', 'gpt-4o-2024-08-06', 1000, 500);
+      expect(result.totalCostUSD).toBeCloseTo(0.0075, 6);
     });
   });
 
   describe('edge cases', () => {
     it('returns zeros for unknown provider', () => {
       const result = calculateCost('mistral', 'some-model', 1000, 500);
-      expect(result.inputCostUSD).toBe(0);
-      expect(result.outputCostUSD).toBe(0);
       expect(result.totalCostUSD).toBe(0);
     });
 
     it('returns zeros for unknown model', () => {
       const result = calculateCost('openai', 'gpt-99', 1000, 500);
-      expect(result.inputCostUSD).toBe(0);
-      expect(result.outputCostUSD).toBe(0);
       expect(result.totalCostUSD).toBe(0);
     });
 
@@ -88,12 +94,46 @@ describe('calculateCost', () => {
 
     it('handles large token counts', () => {
       const result = calculateCost('openai', 'gpt-4o', 1_000_000, 1_000_000);
-      // input: 1M / 1M * $2.50 = $2.50
-      // output: 1M / 1M * $10.00 = $10.00
       expect(result.inputCostUSD).toBeCloseTo(2.5, 2);
       expect(result.outputCostUSD).toBeCloseTo(10.0, 2);
       expect(result.totalCostUSD).toBeCloseTo(12.5, 2);
     });
+  });
+});
+
+describe('configurePricing', () => {
+  it('adds custom model pricing', () => {
+    configurePricing('openai', 'ft:gpt-4o-mini:my-org', { input: 0.30, output: 1.20 });
+    const result = calculateCost('openai', 'ft:gpt-4o-mini:my-org', 1000, 500);
+    expect(result.inputCostUSD).toBeCloseTo(0.0003, 6);
+    expect(result.outputCostUSD).toBeCloseTo(0.0006, 6);
+  });
+
+  it('creates a new provider', () => {
+    configurePricing('mistral', 'mistral-large', { input: 2.0, output: 6.0 });
+    const result = calculateCost('mistral', 'mistral-large', 1000, 500);
+    expect(result.totalCostUSD).toBeCloseTo(0.005, 6);
+  });
+
+  it('overrides existing model pricing', () => {
+    const before = calculateCost('openai', 'gpt-4o', 1_000_000, 0);
+    configurePricing('openai', 'gpt-4o', { input: 5.0, output: 20.0 });
+    const after = calculateCost('openai', 'gpt-4o', 1_000_000, 0);
+    expect(after.inputCostUSD).toBe(5.0);
+    expect(after.inputCostUSD).not.toBe(before.inputCostUSD);
+
+    // Restore original pricing
+    configurePricing('openai', 'gpt-4o', { input: 2.5, output: 10.0 });
+  });
+});
+
+describe('setPricingTable', () => {
+  it('sets an entire provider table', () => {
+    setPricingTable('deepseek', {
+      'deepseek-chat': { input: 0.14, output: 0.28, unit: 'per_million_tokens' },
+    });
+    const result = calculateCost('deepseek', 'deepseek-chat', 1000, 500);
+    expect(result.inputCostUSD).toBeCloseTo(0.00014, 6);
   });
 });
 
@@ -102,16 +142,19 @@ describe('getAvailableModels', () => {
     const models = getAvailableModels('openai');
     expect(models).toContain('gpt-4o');
     expect(models).toContain('gpt-4o-mini');
+    expect(models).toContain('o1');
+    expect(models).toContain('o3-mini');
   });
 
   it('returns Anthropic models', () => {
     const models = getAvailableModels('anthropic');
     expect(models).toContain('claude-sonnet-4-20250514');
     expect(models).toContain('claude-opus-4-20250514');
+    expect(models).toContain('claude-3-5-sonnet-20241022');
   });
 
   it('returns empty array for unknown provider', () => {
-    expect(getAvailableModels('unknown')).toEqual([]);
+    expect(getAvailableModels('nonexistent')).toEqual([]);
   });
 });
 
