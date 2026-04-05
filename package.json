@@ -2,14 +2,41 @@
   "name": "llm-cost-meter",
   "version": "0.1.0",
   "description": "Per-feature, per-user cost attribution and reporting for LLM API calls",
+  "author": "shmulikdav",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shmulikdav/llmeter.git"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "dashboard/index.html",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "llm-cost-meter": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.dashboard.json",
+    "demo": "ts-node demo.ts",
+    "dashboard": "node dist/dashboard/server.js",
     "test": "jest",
+    "test:smoke": "ts-node tests/smoke.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -38,14 +65,18 @@
     }
   },
   "dependencies": {
-    "commander": "^12.0.0",
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.3",
+    "commander": "^12.0.0",
     "uuid": "^9.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
-    "@types/uuid": "^9.0.0"
+    "@types/uuid": "^9.0.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
   }
 }

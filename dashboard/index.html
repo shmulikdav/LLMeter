@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>llm-cost-meter — Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #1a1d27; --surface2: #242734; --border: #2e3140;
+      --text: #e4e4e7; --text-muted: #8b8fa3; --accent: #6366f1; --accent2: #818cf8;
+      --green: #22c55e; --amber: #f59e0b; --red: #ef4444; --cyan: #06b6d4; --pink: #ec4899;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Header */
+    .header { border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+    .header h1 span { color: var(--accent2); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .header-meta { font-size: 13px; color: var(--text-muted); }
+    .header-meta strong { color: var(--text); font-weight: 500; }
+
+    /* Toolbar */
+    .toolbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 32px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .toolbar label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .toolbar select, .toolbar input[type="date"] {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px;
+      padding: 6px 10px; font-size: 13px; font-family: inherit; outline: none;
+    }
+    .toolbar select:focus, .toolbar input:focus { border-color: var(--accent); }
+    .toolbar input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+    .filter-group { display: flex; align-items: center; gap: 6px; }
+    .filter-sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+    .btn { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 6px 14px; font-size: 13px; font-family: inherit; cursor: pointer; font-weight: 500; }
+    .btn:hover { opacity: 0.9; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    .btn-outline:hover { border-color: var(--text-muted); color: var(--text); }
+    .active-filter { display: inline-flex; align-items: center; gap: 4px; background: var(--accent)22; color: var(--accent2); border: 1px solid var(--accent)44; border-radius: 6px; padding: 4px 10px; font-size: 12px; }
+    .active-filter .x { cursor: pointer; opacity: 0.7; margin-left: 2px; }
+    .active-filter .x:hover { opacity: 1; }
+
+    .container { max-width: 1320px; margin: 0 auto; padding: 24px 32px; }
+
+    /* KPI Cards */
+    .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 24px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+    .kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .kpi-value { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+    .kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+    /* Charts */
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .chart-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+    .chart-container { position: relative; height: 260px; }
+
+    /* Tables */
+    .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .table-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .table-card-header h3 { font-size: 14px; font-weight: 600; }
+    .export-btns { display: flex; gap: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; font-weight: 500; color: var(--text-muted); padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    th:not(:first-child) { text-align: right; }
+    td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+    tr:last-child td { border-bottom: none; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: var(--surface2); }
+    .feature-badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+    .cost-bar { display: flex; align-items: center; gap: 8px; }
+    .cost-bar-fill { height: 6px; border-radius: 3px; }
+
+    /* Event log */
+    .event-log { max-height: 340px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    .event-row { display: grid; grid-template-columns: 100px 90px 1fr 140px 100px 80px 90px; font-size: 12px; padding: 7px 12px; border-bottom: 1px solid var(--border); align-items: center; }
+    .event-row:hover { background: var(--surface2); }
+    .event-time { color: var(--text-muted); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .pill-anthropic { background: rgba(236,72,153,0.15); color: var(--pink); }
+    .pill-openai { background: rgba(6,182,212,0.15); color: var(--cyan); }
+    .pill-custom { background: rgba(139,92,246,0.15); color: #8b5cf6; }
+
+    .footer { text-align: center; padding: 24px; font-size: 12px; color: var(--text-muted); }
+    .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: var(--text-muted); }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+    .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+
+    @media (max-width: 900px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+      .charts-row { grid-template-columns: 1fr; }
+      .container { padding: 16px; }
+      .toolbar { padding: 12px 16px; }
+      .event-row { grid-template-columns: 80px 70px 1fr 100px 70px 60px 70px; font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"><div class="loading">Loading events...</div></div>
+
+  <script>
+    const COLORS = ['#6366f1','#06b6d4','#22c55e','#f59e0b','#ef4444','#ec4899','#8b5cf6','#14b8a6'];
+
+    // ── State ──
+    let allEvents = [];
+    let filters = { feature: '', userId: '', model: '', env: '', dateFrom: '', dateTo: '' };
+    let charts = {};
+
+    // ── Formatters ──
+    function fmtCost(n) { return n === 0 ? '$0.00' : n < 0.01 ? '$'+n.toFixed(5) : n < 1 ? '$'+n.toFixed(4) : '$'+n.toFixed(2); }
+    function fmtNum(n) { return n.toLocaleString('en-US'); }
+    function fmtDate(ts) { return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+    function fmtDateTime(ts) { const d = new Date(ts); return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }); }
+
+    function groupBy(events, key) {
+      const map = {};
+      events.forEach(e => { const k = e[key] || 'unknown'; if (!map[k]) map[k] = []; map[k].push(e); });
+      return map;
+    }
+
+    function getUniqueValues(events, key) {
+      return [...new Set(events.map(e => e[key]).filter(Boolean))].sort();
+    }
+
+    // ── Filtering ──
+    function applyFilters(events) {
+      let f = events;
+      if (filters.feature) f = f.filter(e => e.feature === filters.feature);
+      if (filters.userId) f = f.filter(e => e.userId === filters.userId);
+      if (filters.model) f = f.filter(e => e.model === filters.model);
+      if (filters.env) f = f.filter(e => e.env === filters.env);
+      if (filters.dateFrom) { const d = new Date(filters.dateFrom); f = f.filter(e => new Date(e.timestamp) >= d); }
+      if (filters.dateTo) { const d = new Date(filters.dateTo); d.setHours(23,59,59,999); f = f.filter(e => new Date(e.timestamp) <= d); }
+      return f;
+    }
+
+    function setFilter(key, value) {
+      filters[key] = value;
+      render();
+    }
+
+    function clearFilter(key) {
+      filters[key] = '';
+      render();
+    }
+
+    function clearAllFilters() {
+      Object.keys(filters).forEach(k => filters[k] = '');
+      render();
+    }
+
+    // ── Export ──
+    function exportCSV(rows, columns, filename) {
+      const header = columns.map(c => c.label).join(',');
+      const body = rows.map(r => columns.map(c => c.get(r)).join(',')).join('\n');
+      download(header + '\n' + body, filename, 'text/csv');
+    }
+
+    function exportJSON(data, filename) {
+      download(JSON.stringify(data, null, 2), filename, 'application/json');
+    }
+
+    function download(content, filename, mime) {
+      const blob = new Blob([content], { type: mime });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    // ── Daily cost trend data ──
+    function getDailyTrend(events) {
+      const byDay = {};
+      events.forEach(e => {
+        const day = e.timestamp.substring(0, 10);
+        if (!byDay[day]) byDay[day] = { cost: 0, calls: 0 };
+        byDay[day].cost += e.totalCostUSD;
+        byDay[day].calls += 1;
+      });
+      const days = Object.keys(byDay).sort();
+      return { labels: days, costs: days.map(d => +byDay[d].cost.toFixed(6)), calls: days.map(d => byDay[d].calls) };
+    }
+
+    // ── Render ──
+    function render() {
+      const events = applyFilters(allEvents);
+
+      // Destroy old charts
+      Object.values(charts).forEach(c => c.destroy());
+      charts = {};
+
+      if (allEvents.length === 0) {
+        document.getElementById('app').innerHTML = `
+          <div class="header"><h1><span>llm-cost-meter</span> Dashboard</h1></div>
+          <div class="empty-state"><h2>No events found</h2><p>Run your app with llm-cost-meter to start tracking costs, or run <code>npm run demo</code> to generate sample data.</p></div>`;
+        return;
+      }
+
+      const totalCost = events.reduce((s, e) => s + e.totalCostUSD, 0);
+      const totalTokens = events.reduce((s, e) => s + e.totalTokens, 0);
+      const totalCalls = events.length;
+      const avgCost = totalCalls > 0 ? totalCost / totalCalls : 0;
+
+      const byFeature = groupBy(events, 'feature');
+      const byUser = groupBy(events, 'userId');
+      const byModel = groupBy(events, 'model');
+
+      const makeRows = (grouped) => Object.entries(grouped).map(([k, evts]) => ({
+        name: k, calls: evts.length,
+        tokens: evts.reduce((s, e) => s + e.totalTokens, 0),
+        cost: evts.reduce((s, e) => s + e.totalCostUSD, 0),
+      })).sort((a, b) => b.cost - a.cost);
+
+      const featureRows = makeRows(byFeature);
+      const userRows = makeRows(byUser);
+      const modelRows = makeRows(byModel);
+      const maxFeatureCost = featureRows[0]?.cost || 1;
+      const trend = getDailyTrend(events);
+
+      // Unique values for dropdowns (from ALL events, not filtered)
+      const allFeatures = getUniqueValues(allEvents, 'feature');
+      const allUsers = getUniqueValues(allEvents, 'userId');
+      const allModels = getUniqueValues(allEvents, 'model');
+      const allEnvs = getUniqueValues(allEvents, 'env');
+
+      // Active filters display
+      const activeFilters = Object.entries(filters).filter(([,v]) => v).map(([k,v]) =>
+        `<span class="active-filter">${k}: ${v} <span class="x" onclick="clearFilter('${k}')">&times;</span></span>`
+      ).join(' ');
+
+      // Date range from data
+      const timestamps = events.map(e => e.timestamp).sort();
+      const dateRange = timestamps.length ? `${fmtDate(timestamps[0])} — ${fmtDate(timestamps[timestamps.length-1])}` : '';
+
+      document.getElementById('app').innerHTML = `
+        <div class="header">
+          <h1><span>llm-cost-meter</span> Dashboard</h1>
+          <div class="header-right">
+            <div class="header-meta">${dateRange} &nbsp;·&nbsp; <strong>${fmtNum(allEvents.length)}</strong> total events</div>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="filter-group">
+            <label>Date</label>
+            <input type="date" id="filterFrom" value="${filters.dateFrom}" onchange="setFilter('dateFrom', this.value)">
+            <span style="color: var(--text-muted)">to</span>
+            <input type="date" id="filterTo" value="${filters.dateTo}" onchange="setFilter('dateTo', this.value)">
+          </div>
+          <div class="filter-sep"></div>
+          <div class="filter-group">
+            <label>Feature</label>
+            <select onchange="setFilter('feature', this.value)">
+              <option value="">All</option>
+              ${allFeatures.map(f => `<option value="${f}" ${filters.feature===f?'selected':''}>${f}</option>`).join('')}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>User</label>
+            <select onchange="setFilter('userId', this.value)">
+              <option value="">All</option>
+              ${allUsers.map(u => `<option value="${u}" ${filters.userId===u?'selected':''}>${u}</option>`).join('')}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Model</label>
+            <select onchange="setFilter('model', this.value)">
+              <option value="">All</option>
+              ${allModels.map(m => `<option value="${m}" ${filters.model===m?'selected':''}>${m}</option>`).join('')}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Env</label>
+            <select onchange="setFilter('env', this.value)">
+              <option value="">All</option>
+              ${allEnvs.map(e => `<option value="${e}" ${filters.env===e?'selected':''}>${e}</option>`).join('')}
+            </select>
+          </div>
+          ${activeFilters ? `<div class="filter-sep"></div><button class="btn-outline btn" onclick="clearAllFilters()">Clear all</button>` : ''}
+          ${activeFilters ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${activeFilters}</div>` : ''}
+        </div>
+
+        <div class="container">
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Total Spend</div>
+              <div class="kpi-value" style="color: var(--accent2)">${fmtCost(totalCost)}</div>
+              <div class="kpi-sub">${fmtNum(totalCalls)} API calls</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Avg Cost / Call</div>
+              <div class="kpi-value">${fmtCost(avgCost)}</div>
+              <div class="kpi-sub">across ${Object.keys(byFeature).length} features</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Total Tokens</div>
+              <div class="kpi-value">${fmtNum(totalTokens)}</div>
+              <div class="kpi-sub">input + output</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Most Expensive</div>
+              <div class="kpi-value" style="color: var(--amber); font-size: 20px;">${featureRows[0]?.name || '—'}</div>
+              <div class="kpi-sub">${fmtCost(featureRows[0]?.cost || 0)} · ${totalCost > 0 ? ((featureRows[0]?.cost || 0) / totalCost * 100).toFixed(0) : 0}% of total</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Costliest User</div>
+              <div class="kpi-value" style="color: var(--cyan); font-size: 20px;">${userRows[0]?.name || '—'}</div>
+              <div class="kpi-sub">${fmtCost(userRows[0]?.cost || 0)} · ${userRows[0]?.calls || 0} calls</div>
+            </div>
+          </div>
+
+          <!-- Daily trend (full width) -->
+          <div class="chart-card" style="margin-bottom: 24px">
+            <h3>Daily Cost Trend</h3>
+            <div class="chart-container" style="height: 200px"><canvas id="chartTrend"></canvas></div>
+          </div>
+
+          <div class="charts-row">
+            <div class="chart-card">
+              <h3>Cost by Feature</h3>
+              <div class="chart-container"><canvas id="chartFeatureCost"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h3>Calls by Model</h3>
+              <div class="chart-container"><canvas id="chartModelCalls"></canvas></div>
+            </div>
+          </div>
+
+          <div class="charts-row">
+            <div class="chart-card">
+              <h3>Cost by User</h3>
+              <div class="chart-container"><canvas id="chartUserCost"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <h3>Cost vs Calls per Feature</h3>
+              <div class="chart-container"><canvas id="chartCostVsCalls"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Feature table -->
+          <div class="table-card">
+            <div class="table-card-header">
+              <h3>Cost Breakdown by Feature</h3>
+              <div class="export-btns">
+                <button class="btn btn-outline" onclick="exportFeatureCSV()">Export CSV</button>
+                <button class="btn btn-outline" onclick="exportFeatureJSON()">Export JSON</button>
+              </div>
+            </div>
+            <table>
+              <thead><tr><th>Feature</th><th>Calls</th><th>Total Tokens</th><th>Avg Cost/Call</th><th>Total Cost</th><th style="width:200px">Share</th></tr></thead>
+              <tbody>
+                ${featureRows.map((r, i) => `
+                  <tr class="clickable" onclick="setFilter('feature','${r.name}')">
+                    <td><span class="feature-badge" style="background:${COLORS[i%COLORS.length]}22;color:${COLORS[i%COLORS.length]}">${r.name}</span></td>
+                    <td>${fmtNum(r.calls)}</td><td>${fmtNum(r.tokens)}</td><td>${fmtCost(r.cost/r.calls)}</td>
+                    <td><strong>${fmtCost(r.cost)}</strong></td>
+                    <td><div class="cost-bar"><div class="cost-bar-fill" style="width:${(r.cost/maxFeatureCost)*160}px;background:${COLORS[i%COLORS.length]}"></div><span style="color:var(--text-muted);font-size:11px">${totalCost > 0 ? (r.cost/totalCost*100).toFixed(1) : 0}%</span></div></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- User table -->
+          <div class="table-card">
+            <div class="table-card-header">
+              <h3>Cost Breakdown by User</h3>
+              <div class="export-btns">
+                <button class="btn btn-outline" onclick="exportUserCSV()">Export CSV</button>
+                <button class="btn btn-outline" onclick="exportUserJSON()">Export JSON</button>
+              </div>
+            </div>
+            <table>
+              <thead><tr><th>User</th><th>Calls</th><th>Tokens</th><th>Avg Cost/Call</th><th>Total Cost</th></tr></thead>
+              <tbody>
+                ${userRows.map(r => `
+                  <tr class="clickable" onclick="setFilter('userId','${r.name}')">
+                    <td>${r.name}</td><td>${fmtNum(r.calls)}</td><td>${fmtNum(r.tokens)}</td>
+                    <td>${fmtCost(r.cost/r.calls)}</td><td><strong>${fmtCost(r.cost)}</strong></td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Events log -->
+          <div class="table-card">
+            <div class="table-card-header">
+              <h3>Recent Events (${fmtNum(events.length)})</h3>
+              <div class="export-btns">
+                <button class="btn btn-outline" onclick="exportAllEventsCSV()">Export All CSV</button>
+                <button class="btn btn-outline" onclick="exportAllEventsJSON()">Export All JSON</button>
+              </div>
+            </div>
+            <div class="event-log">
+              <div class="event-row" style="font-weight:600;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">
+                <div>Date</div><div>Time</div><div>Feature</div><div>Model</div><div>User</div><div>Tokens</div><div>Cost</div>
+              </div>
+              ${events.slice().reverse().slice(0, 200).map(e => `
+                <div class="event-row">
+                  <div class="event-time">${fmtDate(e.timestamp)}</div>
+                  <div class="event-time">${new Date(e.timestamp).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
+                  <div>${e.feature || 'untagged'}</div>
+                  <div><span class="pill pill-${e.provider}">${e.model}</span></div>
+                  <div style="color:var(--text-muted)">${e.userId || '—'}</div>
+                  <div>${fmtNum(e.totalTokens)}</div>
+                  <div><strong>${fmtCost(e.totalCostUSD)}</strong></div>
+                </div>`).join('')}
+              ${events.length > 200 ? `<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:12px">Showing 200 of ${fmtNum(events.length)} events. Export for full data.</div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="footer">llm-cost-meter v0.1.0 — Per-feature, per-user LLM cost attribution</div>
+      `;
+
+      // ── Charts ──
+      const chartOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b8fa3', font: { size: 11 } } } } };
+
+      // Daily trend
+      if (trend.labels.length > 0) {
+        charts.trend = new Chart(document.getElementById('chartTrend'), {
+          type: 'bar',
+          data: {
+            labels: trend.labels,
+            datasets: [{
+              label: 'Daily Cost (USD)',
+              data: trend.costs,
+              backgroundColor: COLORS[0] + 'cc',
+              borderRadius: 4,
+            }]
+          },
+          options: { ...chartOpts,
+            scales: {
+              x: { grid: { display: false }, ticks: { color: '#8b8fa3', font: { size: 10 } } },
+              y: { grid: { color: '#2e3140' }, ticks: { color: '#8b8fa3', callback: v => '$' + v } },
+            },
+            plugins: { ...chartOpts.plugins, legend: { display: false } },
+          }
+        });
+      }
+
+      // Doughnut
+      charts.feature = new Chart(document.getElementById('chartFeatureCost'), {
+        type: 'doughnut',
+        data: { labels: featureRows.map(r=>r.name), datasets: [{ data: featureRows.map(r=>+r.cost.toFixed(6)), backgroundColor: featureRows.map((_,i)=>COLORS[i%COLORS.length]), borderWidth: 0, hoverOffset: 6 }] },
+        options: { ...chartOpts, cutout: '65%', plugins: { ...chartOpts.plugins, legend: { position:'right', labels: { color:'#8b8fa3', font:{size:11}, padding:12 } } },
+          onClick: (evt, els) => { if (els.length) setFilter('feature', featureRows[els[0].index].name); }
+        }
+      });
+
+      // Model bar
+      charts.model = new Chart(document.getElementById('chartModelCalls'), {
+        type: 'bar',
+        data: { labels: modelRows.map(r=>r.name), datasets: [{ label:'Calls', data: modelRows.map(r=>r.calls), backgroundColor: modelRows.map((_,i)=>COLORS[i%COLORS.length]+'cc'), borderRadius:4, barThickness:28 }] },
+        options: { ...chartOpts, indexAxis:'y',
+          scales: { x:{grid:{color:'#2e3140'},ticks:{color:'#8b8fa3'}}, y:{grid:{display:false},ticks:{color:'#e4e4e7',font:{size:11}}} },
+          plugins: { ...chartOpts.plugins, legend:{display:false} },
+          onClick: (evt, els) => { if (els.length) setFilter('model', modelRows[els[0].index].name); }
+        }
+      });
+
+      // User bar
+      charts.user = new Chart(document.getElementById('chartUserCost'), {
+        type: 'bar',
+        data: { labels: userRows.map(r=>r.name), datasets: [{ label:'Cost (USD)', data: userRows.map(r=>+r.cost.toFixed(6)), backgroundColor: userRows.map((_,i)=>COLORS[i%COLORS.length]+'cc'), borderRadius:4 }] },
+        options: { ...chartOpts,
+          scales: { x:{grid:{display:false},ticks:{color:'#e4e4e7',font:{size:11}}}, y:{grid:{color:'#2e3140'},ticks:{color:'#8b8fa3',callback:v=>'$'+v}} },
+          plugins: { ...chartOpts.plugins, legend:{display:false} },
+          onClick: (evt, els) => { if (els.length) setFilter('userId', userRows[els[0].index].name); }
+        }
+      });
+
+      // Bubble
+      charts.bubble = new Chart(document.getElementById('chartCostVsCalls'), {
+        type: 'bubble',
+        data: { datasets: featureRows.map((r,i) => ({ label:r.name, data:[{x:r.calls, y:+r.cost.toFixed(6), r:Math.max(6,Math.sqrt(r.tokens/50))}], backgroundColor:COLORS[i%COLORS.length]+'aa', borderColor:COLORS[i%COLORS.length], borderWidth:1 })) },
+        options: { ...chartOpts,
+          scales: { x:{title:{display:true,text:'Calls',color:'#8b8fa3'},grid:{color:'#2e3140'},ticks:{color:'#8b8fa3'}}, y:{title:{display:true,text:'Cost (USD)',color:'#8b8fa3'},grid:{color:'#2e3140'},ticks:{color:'#8b8fa3',callback:v=>'$'+v}} },
+          plugins: { ...chartOpts.plugins, legend:{position:'top',labels:{color:'#8b8fa3',font:{size:11},usePointStyle:true,pointStyle:'circle'}} }
+        }
+      });
+    }
+
+    // ── Export functions ──
+    function getFilteredEvents() { return applyFilters(allEvents); }
+
+    function getFeatureRows() {
+      const grouped = groupBy(getFilteredEvents(), 'feature');
+      return Object.entries(grouped).map(([k,evts]) => ({
+        name: k, calls: evts.length, tokens: evts.reduce((s,e) => s+e.totalTokens,0), cost: evts.reduce((s,e) => s+e.totalCostUSD,0)
+      })).sort((a,b) => b.cost - a.cost);
+    }
+
+    function getUserRows() {
+      const grouped = groupBy(getFilteredEvents(), 'userId');
+      return Object.entries(grouped).map(([k,evts]) => ({
+        name: k, calls: evts.length, tokens: evts.reduce((s,e) => s+e.totalTokens,0), cost: evts.reduce((s,e) => s+e.totalCostUSD,0)
+      })).sort((a,b) => b.cost - a.cost);
+    }
+
+    function exportFeatureCSV() {
+      exportCSV(getFeatureRows(), [
+        { label: 'feature', get: r => r.name }, { label: 'calls', get: r => r.calls },
+        { label: 'total_tokens', get: r => r.tokens }, { label: 'avg_cost', get: r => (r.cost/r.calls).toFixed(6) },
+        { label: 'total_cost', get: r => r.cost.toFixed(6) }
+      ], 'cost-by-feature.csv');
+    }
+    function exportFeatureJSON() { exportJSON({ groupBy: 'feature', data: getFeatureRows() }, 'cost-by-feature.json'); }
+    function exportUserCSV() {
+      exportCSV(getUserRows(), [
+        { label: 'user', get: r => r.name }, { label: 'calls', get: r => r.calls },
+        { label: 'total_tokens', get: r => r.tokens }, { label: 'avg_cost', get: r => (r.cost/r.calls).toFixed(6) },
+        { label: 'total_cost', get: r => r.cost.toFixed(6) }
+      ], 'cost-by-user.csv');
+    }
+    function exportUserJSON() { exportJSON({ groupBy: 'userId', data: getUserRows() }, 'cost-by-user.json'); }
+    function exportAllEventsCSV() {
+      exportCSV(getFilteredEvents(), [
+        { label:'timestamp', get:e=>e.timestamp }, { label:'provider', get:e=>e.provider },
+        { label:'model', get:e=>e.model }, { label:'feature', get:e=>e.feature||'' },
+        { label:'userId', get:e=>e.userId||'' }, { label:'inputTokens', get:e=>e.inputTokens },
+        { label:'outputTokens', get:e=>e.outputTokens }, { label:'totalTokens', get:e=>e.totalTokens },
+        { label:'totalCostUSD', get:e=>e.totalCostUSD.toFixed(6) }, { label:'latencyMs', get:e=>e.latencyMs },
+        { label:'env', get:e=>e.env||'' },
+      ], 'llm-cost-events.csv');
+    }
+    function exportAllEventsJSON() { exportJSON(getFilteredEvents(), 'llm-cost-events.json'); }
+
+    // ── Load ──
+    fetch('/api/events')
+      .then(r => r.json())
+      .then(events => { allEvents = events; render(); })
+      .catch(() => {
+        document.getElementById('app').innerHTML = `
+          <div class="loading" style="flex-direction:column;gap:12px">
+            <div>Could not load events.</div>
+            <div style="font-size:13px">Make sure the server is running: <code>npm run dashboard</code></div>
+          </div>`;
+      });
+  </script>
+</body>
+</html>
