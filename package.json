@@ -12,6 +12,7 @@
     "demo": "ts-node demo.ts",
     "dashboard": "ts-node dashboard/server.ts",
     "test": "jest",
+    "test:smoke": "ts-node tests/smoke.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -46,8 +47,11 @@
     "uuid": "^9.0.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
     "@types/uuid": "^9.0.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
   }
