@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.0 (2026-04-05)
+
+### Streaming Support
+
+- New `meterStream()` function — wraps streaming LLM calls, records cost after stream completes
+- Works with both OpenAI and Anthropic streaming responses
+- Extracts usage from stream object properties, final chunks, or accumulated message events
+- Records `status: 'error'` events if stream fails mid-way
+- `CostMeter.trackStream()` for instance-level streaming support
+
+### Express Middleware
+
+- New `createExpressMiddleware()` — drop-in Express middleware
+- Attaches `req.meter()` to every request with feature, userId, sessionId pre-filled
+- Custom `extractUserId` and `extractSessionId` functions for flexible auth patterns
+- Supports `env` and `tags` in middleware config
+- Per-call option overrides from route handlers
+
+### Dashboard
+
+- Live mode toggle — auto-refreshes every 5 seconds when enabled
+- Green pulsing indicator when live mode is active
+- Pauses polling when browser tab is hidden (Page Visibility API)
+- Persists live mode preference in localStorage
+
+### Testing
+
+- 128 tests (up from 110)
+- New streaming test suite (10 tests): chunk passthrough, OpenAI/Anthropic usage extraction, error handling, latency measurement
+- New middleware test suite (8 tests): req.meter attachment, user/session extraction, config overrides
+
+---
+
 ## 0.1.0 (2026-04-05)
 
 Initial release of llm-cost-meter.

@@ -83,6 +83,7 @@
     .pill-openai { background: rgba(6,182,212,0.15); color: var(--cyan); }
     .pill-custom { background: rgba(139,92,246,0.15); color: #8b5cf6; }
 
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
     .footer { text-align: center; padding: 24px; font-size: 12px; color: var(--text-muted); }
     .loading { display: flex; align-items: center; justify-content: center; height: 60vh; font-size: 16px; color: var(--text-muted); }
     .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
@@ -281,6 +282,11 @@
           </div>
           ${activeFilters ? `<div class="filter-sep"></div><button class="btn-outline btn" onclick="clearAllFilters()">Clear all</button>` : ''}
           ${activeFilters ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${activeFilters}</div>` : ''}
+          <div style="margin-left:auto">
+            <button class="btn ${liveMode ? '' : 'btn-outline'}" onclick="toggleLive()" style="${liveMode ? 'background:var(--green)' : ''}">
+              ${liveMode ? '<span style="display:inline-block;width:8px;height:8px;background:white;border-radius:50%;margin-right:6px;animation:pulse 1.5s infinite"></span>Live' : 'Live'}
+            </button>
+          </div>
         </div>
 
         <div class="container">
@@ -528,17 +534,55 @@
     }
     function exportAllEventsJSON() { exportJSON(getFilteredEvents(), 'llm-cost-events.json'); }
 
-    // ── Load ──
-    fetch('/api/events')
-      .then(r => r.json())
-      .then(events => { allEvents = events; render(); })
-      .catch(() => {
-        document.getElementById('app').innerHTML = `
-          <div class="loading" style="flex-direction:column;gap:12px">
-            <div>Could not load events.</div>
-            <div style="font-size:13px">Make sure the server is running: <code>npm run dashboard</code></div>
-          </div>`;
-      });
+    // ── Live Mode ──
+    let liveMode = localStorage.getItem('llm-meter-live') === 'true';
+    let liveInterval = null;
+
+    function toggleLive() {
+      liveMode = !liveMode;
+      localStorage.setItem('llm-meter-live', String(liveMode));
+      if (liveMode) startPolling(); else stopPolling();
+      render();
+    }
+
+    function startPolling() {
+      stopPolling();
+      liveInterval = setInterval(() => {
+        if (document.hidden) return;
+        fetchEvents(true);
+      }, 5000);
+    }
+
+    function stopPolling() {
+      if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+    }
+
+    function fetchEvents(silent) {
+      fetch('/api/events')
+        .then(r => r.json())
+        .then(events => {
+          if (silent && events.length === allEvents.length) return;
+          allEvents = events;
+          render();
+        })
+        .catch(() => {
+          if (!silent) {
+            document.getElementById('app').innerHTML = `
+              <div class="loading" style="flex-direction:column;gap:12px">
+                <div>Could not load events.</div>
+                <div style="font-size:13px">Make sure the server is running: <code>npm run dashboard</code></div>
+              </div>`;
+          }
+        });
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && liveMode) fetchEvents(true);
+    });
+
+    // ── Initial Load ──
+    fetchEvents(false);
+    if (liveMode) startPolling();
   </script>
 </body>
 </html>

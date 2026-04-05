@@ -7,6 +7,7 @@ import {
   CostAdapter,
   ErrorHandler,
   MeterStats,
+  ExpressMiddlewareOptions,
 } from './types';
 import { calculateCost, setUnknownModelHandler } from './pricing';
 import { resolveAdapters } from './adapters';
@@ -24,6 +25,7 @@ export {
   GlobalConfig,
   ErrorHandler,
   MeterStats,
+  ExpressMiddlewareOptions,
 } from './types';
 
 // Re-export pricing utilities
@@ -38,6 +40,9 @@ export {
 
 // Re-export adapters
 export { ConsoleAdapter, LocalAdapter, createAdapter } from './adapters';
+
+// Re-export middleware
+export { createExpressMiddleware } from './middleware/express';
 
 // ── Default config ──────────────────────────────────────────────
 
@@ -412,9 +417,228 @@ export class CostMeter {
     });
   }
 
+  /**
+   * Wrap a streaming LLM call. Passes through the stream unchanged
+   * and records cost after the stream completes.
+   */
+  async trackStream<T extends AsyncIterable<any>>(
+    fn: () => Promise<T>,
+    options: MeterOptions = {}
+  ): Promise<T> {
+    const startTime = Date.now();
+    const stream = await fn();
+    const adapters = this.adapters;
+    const config = this.config;
+
+    return wrapStream(stream, startTime, options, adapters, config.defaultTags ?? {}, config.provider, config.onError, config.verbose) as T;
+  }
+
   async flush(): Promise<void> {
     await Promise.all(
       this.adapters.map((a) => (a.flush ? a.flush() : Promise.resolve()))
     );
   }
+}
+
+// ── Streaming Support ───────────────────────────────────────────
+
+/**
+ * Extract usage from a streaming response's accumulated state.
+ * Works with both OpenAI and Anthropic stream objects.
+ */
+function extractStreamUsage(streamObj: any, chunks: any[]): {
+  provider: 'openai' | 'anthropic' | 'custom';
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+} {
+  // OpenAI: stream objects often have .usage or finalUsage after iteration
+  if (streamObj?.usage?.prompt_tokens !== undefined) {
+    return {
+      provider: 'openai',
+      model: streamObj.model ?? 'unknown',
+      inputTokens: streamObj.usage.prompt_tokens,
+      outputTokens: streamObj.usage.completion_tokens ?? 0,
+    };
+  }
+
+  // Anthropic: stream objects accumulate a .message or .finalMessage with usage
+  if (streamObj?.message?.usage?.input_tokens !== undefined) {
+    return {
+      provider: 'anthropic',
+      model: streamObj.message.model ?? 'unknown',
+      inputTokens: streamObj.message.usage.input_tokens,
+      outputTokens: streamObj.message.usage.output_tokens ?? 0,
+    };
+  }
+  if (streamObj?.finalMessage?.usage?.input_tokens !== undefined) {
+    return {
+      provider: 'anthropic',
+      model: streamObj.finalMessage.model ?? 'unknown',
+      inputTokens: streamObj.finalMessage.usage.input_tokens,
+      outputTokens: streamObj.finalMessage.usage.output_tokens ?? 0,
+    };
+  }
+
+  // Fallback: scan chunks for usage data
+  let model = 'unknown';
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let provider: 'openai' | 'anthropic' | 'custom' = 'custom';
+
+  for (const chunk of chunks) {
+    if (chunk?.model) model = chunk.model;
+
+    // OpenAI chunk with usage (last chunk when include_usage is set)
+    if (chunk?.usage?.prompt_tokens !== undefined) {
+      provider = 'openai';
+      inputTokens = chunk.usage.prompt_tokens;
+      outputTokens = chunk.usage.completion_tokens ?? 0;
+    }
+
+    // Anthropic message_start event
+    if (chunk?.type === 'message_start' && chunk?.message?.usage) {
+      provider = 'anthropic';
+      inputTokens = chunk.message.usage.input_tokens ?? 0;
+    }
+
+    // Anthropic message_delta event with usage
+    if (chunk?.type === 'message_delta' && chunk?.usage) {
+      provider = 'anthropic';
+      outputTokens = chunk.usage.output_tokens ?? 0;
+    }
+  }
+
+  return { provider, model, inputTokens, outputTokens };
+}
+
+function wrapStream<T extends AsyncIterable<any>>(
+  stream: T,
+  startTime: number,
+  options: MeterOptions,
+  adapters: CostAdapter[],
+  defaultTags: Record<string, string>,
+  providerHint?: 'openai' | 'anthropic' | 'custom',
+  onError?: ErrorHandler,
+  verbose?: boolean
+): AsyncIterable<any> {
+  const chunks: any[] = [];
+
+  const wrapped = {
+    [Symbol.asyncIterator](): AsyncIterator<any> {
+      const iterator = (stream as any)[Symbol.asyncIterator]();
+
+      return {
+        async next() {
+          try {
+            const result = await iterator.next();
+            if (!result.done) {
+              chunks.push(result.value);
+            }
+            if (result.done) {
+              // Stream ended — record cost event
+              const latencyMs = Date.now() - startTime;
+              const usage = extractStreamUsage(stream, chunks);
+              const provider = providerHint ?? usage.provider;
+              const event = buildEvent(
+                provider, usage.model, usage.inputTokens, usage.outputTokens,
+                latencyMs, options, defaultTags
+              );
+              stats.eventsTracked++;
+              dispatchEvent(event, adapters, options.awaitWrites ?? false, onError, verbose);
+            }
+            return result;
+          } catch (error) {
+            // Stream errored — record error event
+            const latencyMs = Date.now() - startTime;
+            const event = buildEvent(
+              providerHint ?? 'custom', 'unknown', 0, 0, latencyMs,
+              options, defaultTags, 'error',
+              error instanceof Error ? error.message : String(error)
+            );
+            stats.eventsTracked++;
+            dispatchEvent(event, adapters, options.awaitWrites ?? false, onError, verbose);
+            throw error;
+          }
+        },
+        async return(value?: any) {
+          if (iterator.return) return iterator.return(value);
+          return { done: true, value: undefined };
+        },
+        async throw(error?: any) {
+          if (iterator.throw) return iterator.throw(error);
+          throw error;
+        },
+      };
+    },
+  };
+
+  // Copy over non-iterator properties from the original stream
+  // (e.g., OpenAI's .controller, .response, etc.)
+  const proto = Object.getOwnPropertyNames(stream).concat(
+    Object.getOwnPropertyNames(Object.getPrototypeOf(stream) ?? {})
+  );
+  for (const key of proto) {
+    if (key === 'constructor' || key === Symbol.asyncIterator.toString()) continue;
+    if (!(key in wrapped)) {
+      try {
+        const desc = Object.getOwnPropertyDescriptor(stream, key) ??
+                     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stream), key);
+        if (desc) {
+          Object.defineProperty(wrapped, key, {
+            get: () => (stream as any)[key],
+            enumerable: desc.enumerable,
+            configurable: true,
+          });
+        }
+      } catch {
+        // Skip non-copyable properties
+      }
+    }
+  }
+
+  return wrapped;
+}
+
+/**
+ * Wrap a streaming LLM API call to track cost and usage.
+ * Returns the stream unchanged — cost is recorded after the stream completes.
+ *
+ * Works with both OpenAI and Anthropic streaming responses.
+ *
+ * @example
+ * ```typescript
+ * const stream = await meterStream(
+ *   () => openai.chat.completions.create({ model: 'gpt-4o', messages: [...], stream: true }),
+ *   { feature: 'chat', userId: 'user_123' }
+ * );
+ * for await (const chunk of stream) {
+ *   process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
+ * }
+ * // Cost event automatically recorded when stream ends
+ * ```
+ */
+export async function meterStream<T extends AsyncIterable<any>>(
+  fn: () => Promise<T>,
+  options: MeterOptions = {}
+): Promise<T> {
+  const startTime = Date.now();
+  const adapters = getAdapters();
+
+  let stream: T;
+  try {
+    stream = await fn();
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    const event = buildEvent(
+      'custom', 'unknown', 0, 0, latencyMs, options,
+      globalConfig.defaultTags, 'error',
+      error instanceof Error ? error.message : String(error)
+    );
+    stats.eventsTracked++;
+    dispatchEvent(event, adapters, options.awaitWrites ?? false, globalConfig.onError, globalConfig.verbose);
+    throw error;
+  }
+
+  return wrapStream(stream, startTime, options, adapters, globalConfig.defaultTags, undefined, globalConfig.onError, globalConfig.verbose) as T;
 }

@@ -78,6 +78,82 @@ By feature:
 Insight: 'chat' drives 53% of cost but only 24% of calls.
 ```
 
+## Streaming Support
+
+Track costs from streaming LLM responses. The stream is passed through unchanged — cost is recorded automatically when the stream ends.
+
+```typescript
+import { meterStream } from 'llm-cost-meter';
+
+// OpenAI streaming
+const stream = await meterStream(
+  () => openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: 'Write a poem' }],
+    stream: true,
+    stream_options: { include_usage: true },
+  }),
+  { feature: 'chat', userId: 'user_123' }
+);
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
+}
+// Cost event automatically recorded when stream ends
+
+// Anthropic streaming
+const stream = await meterStream(
+  () => anthropic.messages.stream({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: 'Write a poem' }],
+  }),
+  { feature: 'chat' }
+);
+
+for await (const event of stream) {
+  // handle events
+}
+```
+
+Works with both OpenAI and Anthropic streaming. Extracts usage from the stream object, final chunk, or accumulated message events. If the stream errors mid-way, a `status: 'error'` event is recorded.
+
+## Express Middleware
+
+Drop-in middleware that attaches `req.meter()` to every request:
+
+```typescript
+import { createExpressMiddleware, configure } from 'llm-cost-meter';
+
+configure({ adapters: ['console', 'local'] });
+
+// Attach to specific routes
+app.post('/api/chat',
+  createExpressMiddleware({ feature: 'chat' }),
+  async (req, res) => {
+    const response = await req.meter(() =>
+      client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: req.body.message }],
+      })
+    );
+    res.json(response);
+  }
+);
+
+// With custom user/session extraction
+app.use('/api', createExpressMiddleware({
+  feature: 'api',
+  extractUserId: (req) => req.headers['x-user-id'],
+  extractSessionId: (req) => req.cookies?.sid,
+  env: 'production',
+  tags: { team: 'backend' },
+}));
+```
+
+The middleware automatically fills in `feature`, `userId`, `sessionId`, `env`, and `tags` — your route handlers just call `req.meter()`.
+
 ## Tagging Guide
 
 Every `meter()` call accepts these tags:
