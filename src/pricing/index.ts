@@ -1,4 +1,4 @@
-import { ModelPricing, PricingTable } from '../types';
+import { PricingTable } from '../types';
 import openaiPricing from './openai.json';
 import anthropicPricing from './anthropic.json';
 
@@ -7,16 +7,23 @@ const pricingTables: Record<string, PricingTable> = {
   anthropic: { ...(anthropicPricing as PricingTable) },
 };
 
-// Track models we've already warned about to avoid spam
+// Track models we've already warned about to avoid spam (capped to prevent memory leak)
+const MAX_WARNED = 1000;
 const warnedModels = new Set<string>();
 
-// Callback set by the core module for unknown model warnings
 let onUnknownModel: ((provider: string, model: string) => void) | null = null;
 
 export function setUnknownModelHandler(
   handler: ((provider: string, model: string) => void) | null
 ): void {
   onUnknownModel = handler;
+}
+
+function trackWarned(key: string, provider: string, model: string): void {
+  if (warnedModels.has(key)) return;
+  if (warnedModels.size >= MAX_WARNED) warnedModels.clear();
+  warnedModels.add(key);
+  if (onUnknownModel) onUnknownModel(provider, model);
 }
 
 export function calculateCost(
@@ -27,25 +34,15 @@ export function calculateCost(
 ): { inputCostUSD: number; outputCostUSD: number; totalCostUSD: number } {
   const table = pricingTables[provider];
   if (!table) {
-    if (provider !== 'custom' && onUnknownModel) {
-      const key = `${provider}/${model}`;
-      if (!warnedModels.has(key)) {
-        warnedModels.add(key);
-        onUnknownModel(provider, model);
-      }
+    if (provider !== 'custom') {
+      trackWarned(`${provider}/${model}`, provider, model);
     }
     return { inputCostUSD: 0, outputCostUSD: 0, totalCostUSD: 0 };
   }
 
   const pricing = table[model];
   if (!pricing) {
-    if (onUnknownModel) {
-      const key = `${provider}/${model}`;
-      if (!warnedModels.has(key)) {
-        warnedModels.add(key);
-        onUnknownModel(provider, model);
-      }
-    }
+    trackWarned(`${provider}/${model}`, provider, model);
     return { inputCostUSD: 0, outputCostUSD: 0, totalCostUSD: 0 };
   }
 
@@ -57,8 +54,7 @@ export function calculateCost(
 }
 
 /**
- * Add or update pricing for a model. Allows users to register custom models
- * or override built-in pricing.
+ * Add or update pricing for a model.
  */
 export function configurePricing(
   provider: string,
@@ -76,6 +72,16 @@ export function configurePricing(
 }
 
 /**
+ * Remove pricing for a specific model. Returns true if the model existed.
+ */
+export function removePricing(provider: string, model: string): boolean {
+  const table = pricingTables[provider];
+  if (!table || !table[model]) return false;
+  delete table[model];
+  return true;
+}
+
+/**
  * Set pricing for an entire provider at once.
  */
 export function setPricingTable(provider: string, table: PricingTable): void {
@@ -87,6 +93,10 @@ export function getAvailableModels(provider: string): string[] {
   return table ? Object.keys(table) : [];
 }
 
+/**
+ * Returns a deep copy of all pricing tables. Mutations to the returned
+ * object do not affect the internal state.
+ */
 export function getAllPricing(): Record<string, PricingTable> {
-  return pricingTables;
+  return JSON.parse(JSON.stringify(pricingTables));
 }

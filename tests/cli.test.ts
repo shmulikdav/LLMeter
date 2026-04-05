@@ -136,4 +136,33 @@ describe('CLI report', () => {
       });
     }).toThrow();
   });
+
+  it('warns about malformed lines', () => {
+    const malformedFile = path.join(tmpDir, 'malformed.ndjson');
+    fs.writeFileSync(malformedFile, [
+      JSON.stringify(sampleEvents[0]),
+      'NOT VALID JSON',
+      '{ broken',
+      JSON.stringify(sampleEvents[1]),
+    ].join('\n') + '\n');
+
+    const output = execSync(
+      `node ${CLI_PATH} report --file ${malformedFile} --format json`,
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    const parsed = JSON.parse(output);
+    expect(parsed.totals.calls).toBe(2);
+  });
+
+  it('exits with error for file with only malformed lines', () => {
+    const badFile = path.join(tmpDir, 'all-bad.ndjson');
+    fs.writeFileSync(badFile, 'NOT JSON\nALSO NOT JSON\n');
+
+    expect(() => {
+      execSync(`node ${CLI_PATH} report --file ${badFile}`, {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+    }).toThrow();
+  });
 });

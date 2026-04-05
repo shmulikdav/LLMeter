@@ -33,6 +33,7 @@ export {
   getAllPricing,
   configurePricing,
   setPricingTable,
+  removePricing,
 } from './pricing';
 
 // Re-export adapters
@@ -52,7 +53,22 @@ const DEFAULT_CONFIG: GlobalConfig = {
 
 let globalConfig: GlobalConfig = { ...DEFAULT_CONFIG };
 
+// ── Adapter cache (P0 fix: resolve once, not per-call) ─────────
+
+let adapterCache: CostAdapter[] | null = null;
+
+function getAdapters(): CostAdapter[] {
+  if (!adapterCache) {
+    adapterCache = resolveAdapters(globalConfig.adapters, {
+      localPath: globalConfig.localPath,
+    });
+  }
+  return adapterCache;
+}
+
 // ── Stats ───────────────────────────────────────────────────────
+
+const MAX_UNKNOWN_MODELS = 1000;
 
 const stats: MeterStats = {
   eventsTracked: 0,
@@ -64,6 +80,9 @@ const stats: MeterStats = {
 // Wire up unknown model warnings
 function setupUnknownModelHandler(): void {
   setUnknownModelHandler((provider, model) => {
+    if (stats.unknownModels.size >= MAX_UNKNOWN_MODELS) {
+      stats.unknownModels.clear();
+    }
     stats.unknownModels.add(`${provider}/${model}`);
     if (globalConfig.warnOnMissingModel) {
       console.warn(
@@ -82,6 +101,7 @@ setupUnknownModelHandler();
  */
 export function configure(config: Partial<GlobalConfig>): void {
   globalConfig = { ...globalConfig, ...config };
+  adapterCache = null; // invalidate — adapters may have changed
 }
 
 /**
@@ -89,6 +109,7 @@ export function configure(config: Partial<GlobalConfig>): void {
  */
 export function resetConfig(): void {
   globalConfig = { ...DEFAULT_CONFIG };
+  adapterCache = null;
 }
 
 /**
@@ -190,39 +211,23 @@ async function emitEvent(
   }
 }
 
-// ── Public API ─────────────────────────────────────────��────────
-
-/**
- * Wrap an LLM API call to track cost and usage.
- * The response is passed through unchanged.
- *
- * By default, adapter writes are fire-and-forget (non-blocking).
- * Set `options.awaitWrites = true` to wait for writes to complete.
- */
-export async function meter<T>(
-  fn: () => Promise<T>,
-  options: MeterOptions = {}
-): Promise<T> {
-  const startTime = Date.now();
-  const response = await fn();
-  const latencyMs = Date.now() - startTime;
-
-  const provider = detectProvider(response);
-  const model = extractModel(response);
-  const { inputTokens, outputTokens } = extractTokens(response, provider);
+function buildEvent(
+  provider: 'openai' | 'anthropic' | 'custom',
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  latencyMs: number,
+  options: MeterOptions,
+  defaultTags: Record<string, string>,
+  status: 'success' | 'error' = 'success',
+  errorMessage?: string
+): CostEvent {
   const { inputCostUSD, outputCostUSD, totalCostUSD } = calculateCost(
-    provider,
-    model,
-    inputTokens,
-    outputTokens
+    provider, model, inputTokens, outputTokens
   );
+  const mergedTags = { ...defaultTags, ...options.tags };
 
-  const mergedTags = {
-    ...globalConfig.defaultTags,
-    ...options.tags,
-  };
-
-  const event: CostEvent = {
+  return {
     id: uuidv4(),
     timestamp: new Date().toISOString(),
     provider,
@@ -234,40 +239,84 @@ export async function meter<T>(
     outputCostUSD,
     totalCostUSD,
     latencyMs,
+    status,
+    errorMessage,
     feature: options.feature,
     userId: options.userId,
     sessionId: options.sessionId,
-    env: options.env ?? globalConfig.defaultTags.env,
+    env: options.env ?? defaultTags.env,
     tags: Object.keys(mergedTags).length > 0 ? mergedTags : undefined,
   };
+}
 
-  stats.eventsTracked++;
-
-  const adapters = resolveAdapters(globalConfig.adapters, {
-    localPath: globalConfig.localPath,
-  });
-
-  if (options.awaitWrites) {
-    await emitEvent(event, adapters, globalConfig.onError, globalConfig.verbose);
-  } else {
-    emitEvent(event, adapters, globalConfig.onError, globalConfig.verbose).catch(
-      () => {
-        stats.eventsDropped++;
-      }
-    );
+function dispatchEvent(
+  event: CostEvent,
+  adapters: CostAdapter[],
+  awaitWrites: boolean,
+  onError?: ErrorHandler,
+  verbose?: boolean
+): Promise<void> | void {
+  if (awaitWrites) {
+    return emitEvent(event, adapters, onError, verbose);
   }
+  emitEvent(event, adapters, onError, verbose).catch(() => {
+    stats.eventsDropped++;
+  });
+}
+
+// ── Public API ──────────────────────────────────────────────────
+
+/**
+ * Wrap an LLM API call to track cost and usage.
+ * The response is passed through unchanged. If the wrapped function
+ * throws, the error is re-thrown and a failed event is still recorded.
+ *
+ * By default, adapter writes are fire-and-forget (non-blocking).
+ * Set `options.awaitWrites = true` to wait for writes to complete.
+ */
+export async function meter<T>(
+  fn: () => Promise<T>,
+  options: MeterOptions = {}
+): Promise<T> {
+  const startTime = Date.now();
+  const adapters = getAdapters();
+
+  let response: T;
+  try {
+    response = await fn();
+  } catch (error) {
+    // Track the failed call, then re-throw
+    const latencyMs = Date.now() - startTime;
+    const event = buildEvent(
+      'custom', 'unknown', 0, 0, latencyMs, options,
+      globalConfig.defaultTags, 'error',
+      error instanceof Error ? error.message : String(error)
+    );
+    stats.eventsTracked++;
+    dispatchEvent(event, adapters, options.awaitWrites ?? false, globalConfig.onError, globalConfig.verbose);
+    throw error;
+  }
+
+  const latencyMs = Date.now() - startTime;
+  const provider = detectProvider(response);
+  const model = extractModel(response);
+  const { inputTokens, outputTokens } = extractTokens(response, provider);
+
+  const event = buildEvent(
+    provider, model, inputTokens, outputTokens, latencyMs,
+    options, globalConfig.defaultTags
+  );
+  stats.eventsTracked++;
+  await dispatchEvent(event, adapters, options.awaitWrites ?? false, globalConfig.onError, globalConfig.verbose);
 
   return response;
 }
 
 /**
- * Flush all pending adapter writes. Call before process exit to ensure
- * no events are lost.
+ * Flush all pending adapter writes. Call before process exit.
  */
 export async function flush(): Promise<void> {
-  const adapters = resolveAdapters(globalConfig.adapters, {
-    localPath: globalConfig.localPath,
-  });
+  const adapters = getAdapters();
   await Promise.all(
     adapters.map((adapter) => (adapter.flush ? adapter.flush() : Promise.resolve()))
   );
@@ -287,74 +336,39 @@ export class CostMeter {
     });
   }
 
-  /**
-   * Wrap an LLM API call to track cost and usage.
-   */
   async track<T>(fn: () => Promise<T>, options: MeterOptions = {}): Promise<T> {
     const startTime = Date.now();
-    const response = await fn();
-    const latencyMs = Date.now() - startTime;
 
+    let response: T;
+    try {
+      response = await fn();
+    } catch (error) {
+      const latencyMs = Date.now() - startTime;
+      const event = buildEvent(
+        this.config.provider ?? 'custom', 'unknown', 0, 0, latencyMs,
+        options, this.config.defaultTags ?? {}, 'error',
+        error instanceof Error ? error.message : String(error)
+      );
+      stats.eventsTracked++;
+      dispatchEvent(event, this.adapters, options.awaitWrites ?? false, this.config.onError, this.config.verbose);
+      throw error;
+    }
+
+    const latencyMs = Date.now() - startTime;
     const provider = this.config.provider ?? detectProvider(response);
     const model = extractModel(response);
     const { inputTokens, outputTokens } = extractTokens(response, provider);
-    const { inputCostUSD, outputCostUSD, totalCostUSD } = calculateCost(
-      provider,
-      model,
-      inputTokens,
-      outputTokens
+
+    const event = buildEvent(
+      provider, model, inputTokens, outputTokens, latencyMs,
+      options, this.config.defaultTags ?? {}
     );
-
-    const mergedTags = {
-      ...this.config.defaultTags,
-      ...options.tags,
-    };
-
-    const event: CostEvent = {
-      id: uuidv4(),
-      timestamp: new Date().toISOString(),
-      provider,
-      model,
-      inputTokens,
-      outputTokens,
-      totalTokens: inputTokens + outputTokens,
-      inputCostUSD,
-      outputCostUSD,
-      totalCostUSD,
-      latencyMs,
-      feature: options.feature,
-      userId: options.userId,
-      sessionId: options.sessionId,
-      env: options.env,
-      tags: Object.keys(mergedTags).length > 0 ? mergedTags : undefined,
-    };
-
     stats.eventsTracked++;
-
-    if (options.awaitWrites) {
-      await emitEvent(
-        event,
-        this.adapters,
-        this.config.onError,
-        this.config.verbose
-      );
-    } else {
-      emitEvent(
-        event,
-        this.adapters,
-        this.config.onError,
-        this.config.verbose
-      ).catch(() => {
-        stats.eventsDropped++;
-      });
-    }
+    await dispatchEvent(event, this.adapters, options.awaitWrites ?? false, this.config.onError, this.config.verbose);
 
     return response;
   }
 
-  /**
-   * Record a manually-constructed cost event.
-   */
   record(data: {
     model: string;
     provider?: 'openai' | 'anthropic' | 'custom';
@@ -369,16 +383,9 @@ export class CostMeter {
   }): void {
     const provider = data.provider ?? this.config.provider ?? 'custom';
     const { inputCostUSD, outputCostUSD, totalCostUSD } = calculateCost(
-      provider,
-      data.model,
-      data.inputTokens,
-      data.outputTokens
+      provider, data.model, data.inputTokens, data.outputTokens
     );
-
-    const mergedTags = {
-      ...this.config.defaultTags,
-      ...data.tags,
-    };
+    const mergedTags = { ...this.config.defaultTags, ...data.tags };
 
     const event: CostEvent = {
       id: uuidv4(),
@@ -400,20 +407,11 @@ export class CostMeter {
     };
 
     stats.eventsTracked++;
-
-    emitEvent(
-      event,
-      this.adapters,
-      this.config.onError,
-      this.config.verbose
-    ).catch(() => {
+    emitEvent(event, this.adapters, this.config.onError, this.config.verbose).catch(() => {
       stats.eventsDropped++;
     });
   }
 
-  /**
-   * Flush all pending adapter writes.
-   */
   async flush(): Promise<void> {
     await Promise.all(
       this.adapters.map((a) => (a.flush ? a.flush() : Promise.resolve()))

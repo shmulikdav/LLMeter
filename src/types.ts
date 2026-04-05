@@ -10,6 +10,8 @@ export interface CostEvent {
   outputCostUSD: number;
   totalCostUSD: number;
   latencyMs: number;
+  status?: 'success' | 'error';
+  errorMessage?: string;
   feature?: string;
   userId?: string;
   sessionId?: string;

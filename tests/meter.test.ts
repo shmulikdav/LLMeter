@@ -567,3 +567,104 @@ describe('configurePricing integration', () => {
     expect(event.outputCostUSD).toBeCloseTo(0.015, 6);
   });
 });
+
+describe('meter() when wrapped function throws (P1)', () => {
+  let testAdapter: TestAdapter;
+
+  beforeEach(() => {
+    testAdapter = new TestAdapter();
+    configure({ adapters: [testAdapter], warnOnMissingModel: false });
+    resetStats();
+  });
+
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('re-throws the original error', async () => {
+    await expect(
+      meter(async () => { throw new Error('API rate limited'); }, { feature: 'chat', awaitWrites: true })
+    ).rejects.toThrow('API rate limited');
+  });
+
+  it('still records a failed event', async () => {
+    try {
+      await meter(async () => { throw new Error('timeout'); }, { feature: 'chat', awaitWrites: true });
+    } catch {}
+
+    expect(testAdapter.events).toHaveLength(1);
+    const event = testAdapter.events[0];
+    expect(event.status).toBe('error');
+    expect(event.errorMessage).toBe('timeout');
+    expect(event.feature).toBe('chat');
+    expect(event.inputTokens).toBe(0);
+    expect(event.outputTokens).toBe(0);
+    expect(event.totalCostUSD).toBe(0);
+  });
+
+  it('increments eventsTracked for failed calls', async () => {
+    try {
+      await meter(async () => { throw new Error('fail'); }, { feature: 'x', awaitWrites: true });
+    } catch {}
+
+    expect(getMeterStats().eventsTracked).toBe(1);
+  });
+
+  it('records latency even on failure', async () => {
+    try {
+      await meter(async () => {
+        await new Promise(r => setTimeout(r, 60));
+        throw new Error('slow fail');
+      }, { feature: 'x', awaitWrites: true });
+    } catch {}
+
+    expect(testAdapter.events[0].latencyMs).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe('CostMeter.track() when wrapped function throws', () => {
+  it('re-throws and records failed event', async () => {
+    const adapter = new TestAdapter();
+    const costMeter = new CostMeter({ adapters: [adapter] });
+
+    await expect(
+      costMeter.track(async () => { throw new Error('boom'); }, { feature: 'x', awaitWrites: true })
+    ).rejects.toThrow('boom');
+
+    expect(adapter.events).toHaveLength(1);
+    expect(adapter.events[0].status).toBe('error');
+  });
+});
+
+describe('adapter caching (P0)', () => {
+  afterEach(() => {
+    resetConfig();
+    resetStats();
+  });
+
+  it('uses the same adapter instance across multiple meter() calls', async () => {
+    const adapter = new TestAdapter();
+    configure({ adapters: [adapter], warnOnMissingModel: false });
+
+    await meter(mockAnthropicResponse(), { feature: 'a', awaitWrites: true });
+    await meter(mockAnthropicResponse(), { feature: 'b', awaitWrites: true });
+
+    // Both events should go to the SAME adapter instance
+    expect(adapter.events).toHaveLength(2);
+  });
+
+  it('invalidates cache on configure()', async () => {
+    const adapter1 = new TestAdapter();
+    const adapter2 = new TestAdapter();
+
+    configure({ adapters: [adapter1], warnOnMissingModel: false });
+    await meter(mockAnthropicResponse(), { feature: 'a', awaitWrites: true });
+    expect(adapter1.events).toHaveLength(1);
+
+    configure({ adapters: [adapter2], warnOnMissingModel: false });
+    await meter(mockAnthropicResponse(), { feature: 'b', awaitWrites: true });
+    expect(adapter2.events).toHaveLength(1);
+    expect(adapter1.events).toHaveLength(1); // unchanged
+  });
+});

@@ -8,6 +8,7 @@
     "type": "git",
     "url": "https://github.com/shmulikdav/llmeter.git"
   },
+  "type": "commonjs",
   "engines": {
     "node": ">=18.0.0"
   },
@@ -20,6 +21,13 @@
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "llm-cost-meter": "dist/cli.js"
   },

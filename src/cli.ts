@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import * as fs from 'fs';
+import * as readline from 'readline';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import { CostEvent, ReportOptions } from './types';
@@ -11,22 +12,41 @@ import { summaryToJson } from './reporters/json';
 
 const DEFAULT_FILE = './.llm-costs/events.ndjson';
 
-function loadEvents(filePath: string): CostEvent[] {
+async function loadEvents(filePath: string): Promise<CostEvent[]> {
   if (!fs.existsSync(filePath)) {
     console.error(chalk.red(`File not found: ${filePath}`));
+    console.error(
+      chalk.gray('Run your app with llm-cost-meter to generate events, or use --file to specify a path.')
+    );
     process.exit(1);
   }
 
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n').filter((line) => line.trim().length > 0);
-
   const events: CostEvent[] = [];
-  for (const line of lines) {
+  let malformed = 0;
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (line.trim().length === 0) continue;
     try {
       events.push(JSON.parse(line));
     } catch {
-      // Skip malformed lines
+      malformed++;
     }
+  }
+
+  if (malformed > 0) {
+    console.error(
+      chalk.yellow(`Warning: Skipped ${malformed} malformed line${malformed > 1 ? 's' : ''} in ${filePath}`)
+    );
+  }
+
+  if (events.length === 0) {
+    console.error(chalk.yellow(`No valid events found in ${filePath}`));
+    process.exit(1);
   }
 
   return events;
@@ -58,19 +78,14 @@ function printTable(options: ReportOptions, events: CostEvent[]): void {
     rows = rows.slice(0, options.top);
   }
 
-  // Determine date range from events
   const timestamps = filtered.map((e) => e.timestamp).sort();
   const fromDate = timestamps[0]?.substring(0, 10) ?? '';
   const toDate = timestamps[timestamps.length - 1]?.substring(0, 10) ?? '';
 
   console.log('');
+  console.log(chalk.bold(`llm-cost-meter report — ${fromDate} to ${toDate}`));
   console.log(
-    chalk.bold(`llm-cost-meter report — ${fromDate} to ${toDate}`)
-  );
-  console.log(
-    chalk.gray(
-      `Source: ${options.file ?? DEFAULT_FILE} (${formatNumber(filtered.length)} events)`
-    )
+    chalk.gray(`Source: ${options.file ?? DEFAULT_FILE} (${formatNumber(filtered.length)} events)`)
   );
   console.log('');
   console.log(chalk.bold(`By ${groupBy}:`));
@@ -126,9 +141,7 @@ const program = new Command();
 
 program
   .name('llm-cost-meter')
-  .description(
-    'Per-feature, per-user cost attribution and reporting for LLM API calls'
-  )
+  .description('Per-feature, per-user cost attribution and reporting for LLM API calls')
   .version('0.1.0');
 
 program
@@ -147,7 +160,7 @@ program
   .option('--top <n>', 'Show top N results', parseInt)
   .option('--format <type>', 'Output format: table, csv, json', 'table')
   .option('--file <path>', 'Path to events NDJSON file', DEFAULT_FILE)
-  .action((opts) => {
+  .action(async (opts) => {
     const reportOptions: ReportOptions = {
       groupBy: opts.groupBy,
       feature: opts.feature,
@@ -160,7 +173,7 @@ program
       file: opts.file,
     };
 
-    const events = loadEvents(opts.file);
+    const events = await loadEvents(opts.file);
 
     switch (reportOptions.format) {
       case 'csv': {

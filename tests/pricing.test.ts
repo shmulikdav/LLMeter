@@ -1,4 +1,4 @@
-import { calculateCost, getAvailableModels, getAllPricing, configurePricing, setPricingTable } from '../src/pricing';
+import { calculateCost, getAvailableModels, getAllPricing, configurePricing, setPricingTable, removePricing } from '../src/pricing';
 
 describe('calculateCost', () => {
   describe('Anthropic models', () => {
@@ -163,5 +163,32 @@ describe('getAllPricing', () => {
     const pricing = getAllPricing();
     expect(pricing).toHaveProperty('openai');
     expect(pricing).toHaveProperty('anthropic');
+  });
+
+  it('returns a deep copy (mutations do not affect internal state)', () => {
+    const pricing = getAllPricing();
+    pricing.openai['gpt-4o'].input = 999;
+
+    const fresh = getAllPricing();
+    expect(fresh.openai['gpt-4o'].input).toBe(2.5); // unaffected
+  });
+});
+
+describe('removePricing', () => {
+  it('removes an existing model', () => {
+    configurePricing('test-provider', 'test-model', { input: 1, output: 2 });
+    expect(calculateCost('test-provider', 'test-model', 1_000_000, 0).inputCostUSD).toBe(1);
+
+    const removed = removePricing('test-provider', 'test-model');
+    expect(removed).toBe(true);
+    expect(calculateCost('test-provider', 'test-model', 1_000_000, 0).inputCostUSD).toBe(0);
+  });
+
+  it('returns false for non-existent model', () => {
+    expect(removePricing('openai', 'nonexistent-model')).toBe(false);
+  });
+
+  it('returns false for non-existent provider', () => {
+    expect(removePricing('nonexistent-provider', 'any-model')).toBe(false);
   });
 });
