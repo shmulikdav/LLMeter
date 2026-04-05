@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "dashboard/index.html",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -23,9 +24,9 @@
     "llm-cost-meter": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.dashboard.json",
     "demo": "ts-node demo.ts",
-    "dashboard": "ts-node dashboard/server.ts",
+    "dashboard": "node dist/dashboard/server.js",
     "test": "jest",
     "test:smoke": "ts-node tests/smoke.ts",
     "prepublishOnly": "npm run build"
