@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>llm-cost-meter — Per-feature, per-user cost attribution for LLM API calls</title>
+  <meta name="description" content="Know exactly where your AI budget goes. Per-feature, per-user cost attribution for OpenAI and Anthropic API calls. Free and open source.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12131a;
+      --surface-2: #1a1b26;
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --cyan: #22d3ee;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --border: rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.12);
+      --radius: 16px;
+      --green: #22c55e;
+      --red: #ef4444;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    code, pre, .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    a { color: var(--accent-light); text-decoration: none; }
+    a:hover { color: var(--cyan); }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ---- Scroll animations ---- */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ---- Nav ---- */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      transition: background 0.3s, backdrop-filter 0.3s;
+    }
+    nav.scrolled {
+      background: rgba(10,10,15,0.8);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--accent);
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: var(--accent);
+      color: #fff !important;
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .nav-cta:hover { background: var(--accent-light); color: #fff !important; }
+    .nav-toggle { display: none; background: none; border: none; color: var(--text); font-size: 1.5rem; cursor: pointer; }
+
+    /* ---- Hero ---- */
+    .hero {
+      padding: 160px 0 100px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 24px;
+      background: linear-gradient(135deg, var(--accent-light), var(--cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+    }
+    .hero-ctas {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 64px;
+    }
+    .terminal-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .terminal-box:hover { border-color: var(--border-hover); }
+    .terminal-box .dollar { color: var(--accent); user-select: none; }
+    .terminal-box .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px;
+      transition: color 0.2s;
+    }
+    .terminal-box .copy-btn:hover { color: var(--text); }
+    .btn-github {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 24px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .btn-github:hover { border-color: var(--border-hover); background: var(--surface-2); color: var(--text); }
+
+    /* Terminal mockup */
+    .terminal-mockup {
+      max-width: 680px;
+      margin: 0 auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      text-align: left;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+    }
+    .terminal-dot.red { background: #ef4444; }
+    .terminal-dot.yellow { background: #eab308; }
+    .terminal-dot.green { background: #22c55e; }
+    .terminal-body {
+      padding: 20px 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      line-height: 2;
+    }
+    .terminal-body .tag { color: var(--accent-light); }
+    .terminal-body .feature { color: var(--cyan); }
+    .terminal-body .cost { color: var(--green); }
+    .terminal-body .meta { color: var(--text-dim); }
+
+    .terminal-line {
+      opacity: 0;
+      animation: typeIn 0.5s ease forwards;
+    }
+    .terminal-line:nth-child(1) { animation-delay: 0.5s; }
+    .terminal-line:nth-child(2) { animation-delay: 1.2s; }
+    .terminal-line:nth-child(3) { animation-delay: 1.9s; }
+
+    @keyframes typeIn {
+      from { opacity: 0; transform: translateX(-8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* ---- Sections ---- */
+    section { padding: 100px 0; }
+    .section-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 2.5rem);
+      font-weight: 700;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+    .section-sub {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin-bottom: 56px;
+    }
+    .text-center { text-align: center; }
+    .mx-auto { margin-left: auto; margin-right: auto; }
+
+    /* ---- Before / After ---- */
+    .before-after {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+    }
+    .ba-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px;
+      transition: border-color 0.3s;
+    }
+    .ba-card:hover { border-color: var(--border-hover); }
+    .ba-card.before { border-top: 3px solid var(--red); }
+    .ba-card.after { border-top: 3px solid var(--green); }
+    .ba-card h3 {
+      font-size: 1.2rem;
+      margin-bottom: 24px;
+      font-weight: 700;
+    }
+    .ba-card .before-label { color: var(--red); }
+    .ba-card .after-label { color: var(--green); }
+    .ba-card ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .ba-card li {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+      padding-left: 28px;
+      position: relative;
+    }
+    .ba-card.before li::before {
+      content: "\2717";
+      position: absolute;
+      left: 0;
+      color: var(--red);
+      font-weight: 700;
+    }
+    .ba-card.after li::before {
+      content: "\2713";
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    /* ---- Steps ---- */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 32px;
+    }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 36px;
+      transition: border-color 0.3s;
+    }
+    .step:hover { border-color: var(--border-hover); }
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px; height: 36px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+    }
+    .step h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .step pre {
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 0.78rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    /* ---- Features Grid ---- */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 36px;
+      transition: border-color 0.3s;
+    }
+    .feature-card:hover { border-color: var(--border-hover); }
+    .feature-icon {
+      font-size: 2rem;
+      margin-bottom: 16px;
+      display: block;
+    }
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Code Tabs ---- */
+    .tabs-header {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border-radius: 10px 10px 0 0;
+      padding: 4px 4px 0;
+      border: 1px solid var(--border);
+      border-bottom: none;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      padding: 12px 24px;
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      transition: color 0.2s, background 0.2s;
+      font-weight: 500;
+    }
+    .tab-btn.active {
+      background: var(--bg);
+      color: var(--accent-light);
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-content {
+      display: none;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+      padding: 28px;
+      overflow-x: auto;
+    }
+    .tab-content.active { display: block; }
+    .tab-content pre {
+      font-size: 0.85rem;
+      line-height: 1.8;
+      color: var(--text-muted);
+    }
+    .tabs-wrapper {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* ---- Comparison Table ---- */
+    .comparison-wrapper {
+      overflow-x: auto;
+    }
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .comparison-table th,
+    .comparison-table td {
+      padding: 16px 24px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .comparison-table th {
+      font-weight: 600;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .comparison-table th:last-child {
+      color: var(--accent-light);
+    }
+    .comparison-table td {
+      color: var(--text-muted);
+    }
+    .comparison-table td:first-child {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .comparison-table tbody tr:hover {
+      background: var(--surface);
+    }
+    .check { color: var(--green); font-weight: 700; }
+    .cross { color: var(--red); font-weight: 700; }
+    .partial { color: #eab308; }
+    .highlight-col {
+      background: rgba(99,102,241,0.06);
+    }
+
+    /* ---- CTA Section ---- */
+    .cta-section {
+      text-align: center;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .cta-section h2 {
+      font-size: clamp(2rem, 4vw, 2.8rem);
+      font-weight: 800;
+      margin-bottom: 40px;
+    }
+    .cta-terminal {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.05rem;
+      margin-bottom: 40px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .cta-terminal:hover { border-color: var(--accent); }
+    .cta-terminal .dollar { color: var(--accent); user-select: none; }
+    .cta-terminal .copy-btn {
+      background: none; border: none;
+      color: var(--text-dim); cursor: pointer;
+      font-size: 1.1rem; transition: color 0.2s;
+    }
+    .cta-terminal .copy-btn:hover { color: var(--text); }
+    .cta-code {
+      max-width: 640px;
+      margin: 0 auto 40px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      padding: 24px;
+      text-align: left;
+      overflow-x: auto;
+    }
+    .cta-code pre {
+      font-size: 0.85rem;
+      line-height: 1.8;
+      color: var(--text-muted);
+    }
+    .cta-links {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+    .cta-links a {
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+    .cta-links a:hover { color: var(--accent-light); }
+
+    /* ---- Footer ---- */
+    footer {
+      padding: 60px 0;
+      border-top: 1px solid var(--border);
+    }
+    footer .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    .footer-brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 1rem;
+    }
+    .footer-meta {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    .footer-links {
+      display: flex;
+      gap: 24px;
+    }
+    .footer-links a {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      transition: color 0.2s;
+    }
+    .footer-links a:hover { color: var(--text-muted); }
+    .footer-tagline {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      width: 100%;
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 900px) {
+      .before-after, .steps, .features-grid {
+        grid-template-columns: 1fr;
+      }
+      .nav-links { display: none; }
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: 60px;
+        right: 24px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px 28px;
+        gap: 16px;
+      }
+      .nav-toggle { display: block; }
+    }
+    @media (max-width: 600px) {
+      section { padding: 60px 0; }
+      .hero { padding: 120px 0 60px; }
+      .hero h1 { font-size: 2rem; }
+      .hero p { font-size: 1rem; }
+      .terminal-body { font-size: 0.72rem; padding: 14px 16px; }
+      .ba-card, .step, .feature-card { padding: 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav id="nav">
+  <div class="container">
+    <a href="#" class="nav-logo">llm-cost-meter</a>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Menu">&#9776;</button>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="https://github.com/shmulikdav/LLMeter#readme" target="_blank" rel="noopener">Docs</a></li>
+      <li><a href="https://github.com/shmulikdav/LLMeter" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="#get-started" class="nav-cta">Get Started</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <h1 class="fade-in">Know exactly where your<br>AI budget goes.</h1>
+    <p class="fade-in">Per-feature, per-user cost attribution for LLM API calls. One line of code. Zero vendor lock-in. Free and open source.</p>
+
+    <div class="hero-ctas fade-in">
+      <div class="terminal-box" onclick="copyInstall(this)">
+        <span class="dollar">$</span>
+        <span>npm install llm-cost-meter</span>
+        <button class="copy-btn" aria-label="Copy">&#x2398;</button>
+      </div>
+      <a href="https://github.com/shmulikdav/LLMeter" class="btn-github" target="_blank" rel="noopener">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.73.083-.73 1.205.085 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.694.825.576C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <div class="terminal-mockup fade-in">
+      <div class="terminal-bar">
+        <span class="terminal-dot red"></span>
+        <span class="terminal-dot yellow"></span>
+        <span class="terminal-dot green"></span>
+      </div>
+      <div class="terminal-body">
+        <div class="terminal-line"><span class="tag">[llm-cost-meter]</span> <span class="feature">chat</span> <span class="meta">&mdash;</span> <span class="cost">$0.14</span> <span class="meta">(5,278 tokens, 135ms)</span></div>
+        <div class="terminal-line"><span class="tag">[llm-cost-meter]</span> <span class="feature">article-summarizer</span> <span class="meta">&mdash;</span> <span class="cost">$0.008</span> <span class="meta">(1,686 tokens, 107ms)</span></div>
+        <div class="terminal-line"><span class="tag">[llm-cost-meter]</span> <span class="feature">tag-classifier</span> <span class="meta">&mdash;</span> <span class="cost">$0.00004</span> <span class="meta">(148 tokens, 61ms)</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Before / After -->
+<section id="problem">
+  <div class="container">
+    <div class="text-center fade-in">
+      <p class="section-label">The Problem</p>
+      <h2 class="section-title">Your LLM bill is a black box</h2>
+      <p class="section-sub mx-auto">Most teams have one API key, one invoice, and zero visibility into which features or users drive cost.</p>
+    </div>
+    <div class="before-after">
+      <div class="ba-card before fade-in">
+        <h3><span class="before-label">Without</span> llm-cost-meter</h3>
+        <ul>
+          <li>One API key, one invoice, no breakdown</li>
+          <li>CFO asks "where is this $3,000 coming from?" &mdash; "We're not sure."</li>
+          <li>Can't optimize what you can't see</li>
+        </ul>
+      </div>
+      <div class="ba-card after fade-in">
+        <h3><span class="after-label">With</span> llm-cost-meter</h3>
+        <ul>
+          <li>Cost per feature: chat $2.40, summarizer $0.31, classifier $0.02</li>
+          <li>Cost per user: Alice $1.80, Bob $0.62, Charlie $0.31</li>
+          <li>Insight: Chat drives 89% of cost but only 25% of calls</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How It Works -->
+<section id="how-it-works">
+  <div class="container">
+    <div class="text-center fade-in">
+      <p class="section-label">How It Works</p>
+      <h2 class="section-title">Three steps. Two minutes.</h2>
+      <p class="section-sub mx-auto">Wrap your existing API calls. That's it. No proxies, no config servers, no infrastructure changes.</p>
+    </div>
+    <div class="steps">
+      <div class="step fade-in">
+        <div class="step-number">1</div>
+        <h3>Wrap</h3>
+        <pre><code>const response = await meter(
+  () => client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: '...' }]
+  }),
+  { feature: 'chat', userId: 'user_123' }
+);</code></pre>
+      </div>
+      <div class="step fade-in">
+        <div class="step-number">2</div>
+        <h3>See</h3>
+        <pre><code>[llm-cost-meter] chat &mdash; $0.0105 (1,500 tokens, 820ms)</code></pre>
+      </div>
+      <div class="step fade-in">
+        <div class="step-number">3</div>
+        <h3>Report</h3>
+        <pre><code>Feature             Calls   Total Cost
+chat                312     $3.78
+article-summarizer  843     $3.29
+tag-classifier      129     $0.02
+TOTAL               1,284   $7.09</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features Grid -->
+<section id="features">
+  <div class="container">
+    <div class="text-center fade-in">
+      <p class="section-label">Features</p>
+      <h2 class="section-title">Everything you need, nothing you don't</h2>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F50D;</span>
+        <h3>Auto-Detection</h3>
+        <p>Detects OpenAI and Anthropic automatically from response shape</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x26A1;</span>
+        <h3>Streaming Support</h3>
+        <p>meterStream() tracks cost from streaming responses</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F6E0;</span>
+        <h3>Express Middleware</h3>
+        <p>Drop-in createExpressMiddleware() for your routes</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F4CA;</span>
+        <h3>22+ Models</h3>
+        <p>Built-in pricing for GPT-4o, Claude Opus, o1, o3, and more</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F4BB;</span>
+        <h3>Interactive Dashboard</h3>
+        <p>Charts, filters, drill-down, CSV export at localhost:3000</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F4C4;</span>
+        <h3>CLI Reports</h3>
+        <p>Group by feature, user, model. Export CSV, JSON.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Code Examples -->
+<section id="examples">
+  <div class="container">
+    <div class="text-center fade-in">
+      <p class="section-label">Code Examples</p>
+      <h2 class="section-title">Fits into your existing code</h2>
+      <p class="section-sub mx-auto">No SDK rewrites. No config files. Just wrap your calls.</p>
+    </div>
+    <div class="tabs-wrapper fade-in">
+      <div class="tabs-header">
+        <button class="tab-btn active" data-tab="basic">Basic</button>
+        <button class="tab-btn" data-tab="streaming">Streaming</button>
+        <button class="tab-btn" data-tab="express">Express</button>
+      </div>
+      <div class="tab-content active" id="tab-basic">
+        <pre><code>import { meter, configure } from 'llm-cost-meter';
+configure({ adapters: ['console', 'local'] });
+
+const response = await meter(
+  () => openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: 'Hello' }]
+  }),
+  { feature: 'chat', userId: req.user.id }
+);</code></pre>
+      </div>
+      <div class="tab-content" id="tab-streaming">
+        <pre><code>import { meterStream } from 'llm-cost-meter';
+
+const stream = await meterStream(
+  () => openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: 'Write a poem' }],
+    stream: true
+  }),
+  { feature: 'chat', userId: 'user_123' }
+);
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
+}
+// Cost tracked automatically when stream ends</code></pre>
+      </div>
+      <div class="tab-content" id="tab-express">
+        <pre><code>import { createExpressMiddleware } from 'llm-cost-meter';
+
+app.post('/api/chat',
+  createExpressMiddleware({ feature: 'chat' }),
+  async (req, res) => {
+    const response = await req.meter(() =>
+      client.messages.create({ ... })
+    );
+    res.json(response);
+  }
+);</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Comparison Table -->
+<section id="comparison">
+  <div class="container">
+    <div class="text-center fade-in">
+      <p class="section-label">Comparison</p>
+      <h2 class="section-title">How it stacks up</h2>
+      <p class="section-sub mx-auto">No proxies. No gateways. No infrastructure to maintain.</p>
+    </div>
+    <div class="comparison-wrapper fade-in">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>API Keys per Service</th>
+            <th>AI Gateways</th>
+            <th class="highlight-col">llm-cost-meter</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Cost per feature</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>Cost per user</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>Cost per call</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="check">&#10003;</span> Yes</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>Cross-provider</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="partial">&#9679;</span> Partial</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>No vendor lock-in</td>
+            <td><span class="check">&#10003;</span> Yes</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>Setup time</td>
+            <td>None</td>
+            <td>Hours</td>
+            <td class="highlight-col"><strong>2 minutes</strong></td>
+          </tr>
+          <tr>
+            <td>Price</td>
+            <td>Free</td>
+            <td>$$$</td>
+            <td class="highlight-col"><strong>Free</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- Get Started -->
+<section id="get-started" class="cta-section">
+  <div class="container">
+    <h2 class="fade-in">Start tracking in 2 minutes</h2>
+
+    <div class="fade-in">
+      <div class="cta-terminal" onclick="copyInstall(this)">
+        <span class="dollar">$</span>
+        <span>npm install llm-cost-meter</span>
+        <button class="copy-btn" aria-label="Copy">&#x2398;</button>
+      </div>
+    </div>
+
+    <div class="cta-code fade-in">
+      <pre><code>import { meter, configure } from 'llm-cost-meter';
+configure({ adapters: ['console', 'local'] });
+
+const response = await meter(
+  () => openai.chat.completions.create({ model: 'gpt-4o', messages }),
+  { feature: 'chat', userId: user.id }
+);</code></pre>
+    </div>
+
+    <div class="cta-links fade-in">
+      <a href="https://github.com/shmulikdav/LLMeter" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://www.npmjs.com/package/llm-cost-meter" target="_blank" rel="noopener">npm</a>
+      <a href="https://github.com/shmulikdav/LLMeter#readme" target="_blank" rel="noopener">Documentation</a>
+      <a href="https://github.com/shmulikdav/LLMeter#interactive-dashboard" target="_blank" rel="noopener">Dashboard Demo</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <div>
+      <span class="footer-brand">llm-cost-meter</span>
+      <span class="footer-meta">&nbsp;&middot;&nbsp;MIT License&nbsp;&middot;&nbsp;v0.2.0</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/shmulikdav/LLMeter" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://www.npmjs.com/package/llm-cost-meter" target="_blank" rel="noopener">npm</a>
+      <a href="https://github.com/shmulikdav/LLMeter/issues" target="_blank" rel="noopener">Issues</a>
+    </div>
+    <p class="footer-tagline">Built for teams running AI in production.</p>
+  </div>
+</footer>
+
+<script>
+  // Scroll animations
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+  // Nav scroll effect
+  const nav = document.getElementById('nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 40);
+  });
+
+  // Tabs
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // Copy install command
+  function copyInstall(el) {
+    navigator.clipboard.writeText('npm install llm-cost-meter').then(() => {
+      const btn = el.querySelector('.copy-btn');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '&#10003;';
+      btn.style.color = '#22c55e';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1500);
+    });
+  }
+
+  // Close mobile nav on link click
+  document.querySelectorAll('.nav-links a').forEach(link => {
+    link.addEventListener('click', () => {
+      document.querySelector('.nav-links').classList.remove('open');
+    });
+  });
+</script>
+
+</body>
+</html>
