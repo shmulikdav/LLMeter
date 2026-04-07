@@ -176,6 +176,80 @@ await meter(llmCall, {
 });
 ```
 
+## Webhook Adapter
+
+POST cost events to any URL — Slack, Zapier, custom backends:
+
+```typescript
+import { WebhookAdapter, configure } from 'llm-cost-meter';
+
+configure({
+  adapters: [
+    'console',
+    new WebhookAdapter({
+      url: 'https://hooks.slack.com/services/...',
+      headers: { 'Authorization': 'Bearer ...' },
+      batchSize: 10,        // buffer 10 events before sending
+      flushIntervalMs: 5000 // or flush every 5 seconds
+    })
+  ]
+});
+```
+
+Supports single-event mode (default) or batch mode. Retries once on failure. Uses native `fetch()` — no new dependencies.
+
+## OpenTelemetry Adapter
+
+Export cost metrics to Datadog, New Relic, Honeycomb, Grafana — any OpenTelemetry backend:
+
+```typescript
+import { OTelAdapter, configure } from 'llm-cost-meter';
+
+configure({
+  adapters: ['local', new OTelAdapter()]
+});
+```
+
+Records 4 metrics per event:
+- `llm.cost.total` (histogram) — USD cost
+- `llm.tokens.input` (counter) — input tokens consumed
+- `llm.tokens.output` (counter) — output tokens generated
+- `llm.request.duration` (histogram) — latency in ms
+
+Each metric is tagged with `feature`, `user.id`, `model`, `provider`, `env`. Requires `@opentelemetry/api` as a peer dependency (`npm install @opentelemetry/api`).
+
+## Budget Alerts
+
+Set daily cost limits per feature. Get notified when thresholds are exceeded:
+
+```typescript
+import { configureBudget } from 'llm-cost-meter';
+
+configureBudget({
+  rules: [
+    {
+      feature: 'chat',
+      dailyLimitUSD: 50,
+      onExceed: (rule, spent) => {
+        console.warn(`${rule.feature} exceeded $${rule.dailyLimitUSD}/day! Current: $${spent.toFixed(2)}`);
+        // Send Slack alert, page on-call, etc.
+      }
+    },
+    {
+      feature: '*',          // global limit across all features
+      dailyLimitUSD: 200,
+      onExceed: (rule, spent) => sendSlackAlert(`Total LLM spend exceeded $200/day: $${spent.toFixed(2)}`),
+    }
+  ]
+});
+```
+
+- Alerts fire **once per day** per rule (not on every subsequent event)
+- Counters reset at UTC midnight
+- `getBudgetStatus()` returns current spend vs limits
+- `resetBudget()` for testing
+- Callback errors never crash your app
+
 ## Global Configuration
 
 Call `configure()` once at app startup:

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.0 (2026-04-07)
+
+### Webhook Adapter
+- New `WebhookAdapter` — POST cost events to any URL (Slack, Zapier, custom backends)
+- Single-event mode (immediate) or batch mode (buffer N events, flush every M seconds)
+- Retry on failure (1 retry with 100ms backoff)
+- Custom headers for authentication
+- Uses native `fetch()` — zero new dependencies
+
+### OpenTelemetry Adapter
+- New `OTelAdapter` — export cost metrics to Datadog, New Relic, Honeycomb, Grafana
+- Records 4 metrics: `llm.cost.total`, `llm.tokens.input`, `llm.tokens.output`, `llm.request.duration`
+- Metrics tagged with feature, user.id, model, provider, env
+- Uses `@opentelemetry/api` as optional peer dependency
+
+### Budget Alerts
+- New `configureBudget()` — set daily cost limits per feature with callbacks
+- Wildcard rule (`feature: '*'`) for global cost limits
+- Alerts fire once per day per rule (no spam)
+- Counters auto-reset at UTC midnight
+- `getBudgetStatus()` returns current spend vs limits
+- `resetBudget()` for testing
+- Callback errors never crash the pipeline
+
+### Testing
+- 150 tests (up from 128)
+- New webhook test suite with real HTTP server
+- New OTel test suite with mocked @opentelemetry/api
+- New budget test suite covering thresholds, wildcards, reset, error handling
+
+---
+
 ## 0.2.0 (2026-04-05)
 
 ### Streaming Support

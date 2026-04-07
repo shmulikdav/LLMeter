@@ -8,9 +8,12 @@ import {
   ErrorHandler,
   MeterStats,
   ExpressMiddlewareOptions,
+  BudgetConfig,
+  BudgetStatus,
 } from './types';
 import { calculateCost, setUnknownModelHandler } from './pricing';
 import { resolveAdapters } from './adapters';
+import { budgetMonitor } from './budget';
 
 // Re-export types
 export {
@@ -26,6 +29,11 @@ export {
   ErrorHandler,
   MeterStats,
   ExpressMiddlewareOptions,
+  WebhookAdapterConfig,
+  OTelAdapterConfig,
+  BudgetRule,
+  BudgetConfig,
+  BudgetStatus,
 } from './types';
 
 // Re-export pricing utilities
@@ -39,7 +47,7 @@ export {
 } from './pricing';
 
 // Re-export adapters
-export { ConsoleAdapter, LocalAdapter, createAdapter } from './adapters';
+export { ConsoleAdapter, LocalAdapter, WebhookAdapter, OTelAdapter, createAdapter } from './adapters';
 
 // Re-export middleware
 export { createExpressMiddleware } from './middleware/express';
@@ -149,6 +157,30 @@ export function resetStats(): void {
   stats.eventsDropped = 0;
   stats.adapterErrors = 0;
   stats.unknownModels.clear();
+}
+
+// ── Budget API ──────────────────────────────────────────────────
+
+/**
+ * Configure budget alert rules. Fires callbacks when daily cost
+ * thresholds are exceeded per feature.
+ */
+export function configureBudget(config: BudgetConfig): void {
+  budgetMonitor.configure(config);
+}
+
+/**
+ * Get current budget status for all configured rules.
+ */
+export function getBudgetStatus(): BudgetStatus[] {
+  return budgetMonitor.getStatus();
+}
+
+/**
+ * Reset budget accumulators and rules. Useful for testing.
+ */
+export function resetBudget(): void {
+  budgetMonitor.reset();
 }
 
 // ── Internal helpers ────────────────────────────────────────────
@@ -261,6 +293,9 @@ function dispatchEvent(
   onError?: ErrorHandler,
   verbose?: boolean
 ): Promise<void> | void {
+  // Check budget thresholds
+  budgetMonitor.check(event);
+
   if (awaitWrites) {
     return emitEvent(event, adapters, onError, verbose);
   }

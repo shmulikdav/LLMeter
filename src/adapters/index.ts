@@ -4,6 +4,8 @@ import { LocalAdapter } from './local';
 
 export { ConsoleAdapter } from './console';
 export { LocalAdapter } from './local';
+export { WebhookAdapter } from './webhook';
+export { OTelAdapter } from './otel';
 
 export function createAdapter(
   name: string,
@@ -15,7 +17,7 @@ export function createAdapter(
     case 'local':
       return new LocalAdapter(options.localPath ?? './.llm-costs/events.ndjson');
     default:
-      throw new Error(`Unknown adapter: ${name}. Available adapters: console, local`);
+      throw new Error(`Unknown adapter: ${name}. Available adapters: console, local. For webhook and otel, pass an instance directly.`);
   }
 }
 
