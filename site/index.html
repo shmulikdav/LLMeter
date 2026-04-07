@@ -759,6 +759,21 @@ TOTAL               1,284   $7.09</code></pre>
         <h3>CLI Reports</h3>
         <p>Group by feature, user, model. Export CSV, JSON.</p>
       </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F514;</span>
+        <h3>Webhook Adapter</h3>
+        <p>POST events to Slack, Zapier, or any URL. Single or batch mode.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F4E1;</span>
+        <h3>OpenTelemetry</h3>
+        <p>Export cost metrics to Datadog, New Relic, Honeycomb, Grafana.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#x1F6A8;</span>
+        <h3>Budget Alerts</h3>
+        <p>Daily cost limits per feature. Get notified when thresholds are exceeded.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -776,6 +791,7 @@ TOTAL               1,284   $7.09</code></pre>
         <button class="tab-btn active" data-tab="basic">Basic</button>
         <button class="tab-btn" data-tab="streaming">Streaming</button>
         <button class="tab-btn" data-tab="express">Express</button>
+        <button class="tab-btn" data-tab="budget">Budget Alerts</button>
       </div>
       <div class="tab-content active" id="tab-basic">
         <pre><code>import { meter, configure } from 'llm-cost-meter';
@@ -818,6 +834,33 @@ app.post('/api/chat',
     res.json(response);
   }
 );</code></pre>
+      </div>
+      <div class="tab-content" id="tab-budget">
+        <pre><code>import { configureBudget, WebhookAdapter, OTelAdapter } from 'llm-cost-meter';
+
+// Budget alerts — get notified when costs exceed limits
+configureBudget({
+  rules: [
+    { feature: 'chat', dailyLimitUSD: 50,
+      onExceed: (rule, spent) =>
+        sendSlack(`Chat exceeded $${rule.dailyLimitUSD}/day! Spent: $${spent.toFixed(2)}`)
+    },
+    { feature: '*', dailyLimitUSD: 200,
+      onExceed: (rule, spent) => pageOncall('Global LLM budget exceeded')
+    },
+  ]
+});
+
+// Webhook — POST events to Slack, Zapier, or any URL
+configure({
+  adapters: ['local', new WebhookAdapter({
+    url: 'https://hooks.slack.com/services/...',
+    batchSize: 10, flushIntervalMs: 5000
+  })]
+});
+
+// OpenTelemetry — export to Datadog, New Relic, Honeycomb
+configure({ adapters: ['local', new OTelAdapter()] });</code></pre>
       </div>
     </div>
   </div>
@@ -879,6 +922,24 @@ app.post('/api/chat',
             <td class="highlight-col"><strong>2 minutes</strong></td>
           </tr>
           <tr>
+            <td>Budget alerts</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="partial">&#9679;</span> Partial</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>OpenTelemetry export</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="partial">&#9679;</span> Partial</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
+            <td>Webhook notifications</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td><span class="cross">&#10007;</span> No</td>
+            <td class="highlight-col"><span class="check">&#10003;</span> Yes</td>
+          </tr>
+          <tr>
             <td>Price</td>
             <td>Free</td>
             <td>$$$</td>
@@ -927,7 +988,7 @@ const response = await meter(
   <div class="container">
     <div>
       <span class="footer-brand">llm-cost-meter</span>
-      <span class="footer-meta">&nbsp;&middot;&nbsp;MIT License&nbsp;&middot;&nbsp;v0.2.0</span>
+      <span class="footer-meta">&nbsp;&middot;&nbsp;MIT License&nbsp;&middot;&nbsp;v0.3.0</span>
     </div>
     <div class="footer-links">
       <a href="https://github.com/shmulikdav/LLMeter" target="_blank" rel="noopener">GitHub</a>
