@@ -107,3 +107,46 @@ export interface ExpressMiddlewareOptions {
   env?: string;
   tags?: Record<string, string>;
 }
+
+// ── Webhook Adapter Types ──────────────────────────────────────
+
+export interface WebhookAdapterConfig {
+  url: string;
+  headers?: Record<string, string>;
+  /** Number of events to buffer before sending. Default: 1 (immediate). */
+  batchSize?: number;
+  /** Flush buffer interval in ms. Only used when batchSize > 1. Default: 5000. */
+  flushIntervalMs?: number;
+  /** Request timeout in ms. Default: 10000. */
+  timeoutMs?: number;
+}
+
+// ── OpenTelemetry Adapter Types ────────────────────────────────
+
+export interface OTelAdapterConfig {
+  /** OpenTelemetry meter name. Default: 'llm-cost-meter'. */
+  meterName?: string;
+}
+
+// ── Budget Alert Types ─────────────────────────────────────────
+
+export interface BudgetRule {
+  /** Feature name to monitor, or '*' for global (all features). */
+  feature: string;
+  /** Maximum daily spend in USD. */
+  dailyLimitUSD: number;
+  /** Called once per day when the limit is exceeded. */
+  onExceed: (rule: BudgetRule, currentSpendUSD: number) => void;
+}
+
+export interface BudgetConfig {
+  rules: BudgetRule[];
+}
+
+export interface BudgetStatus {
+  feature: string;
+  dailyLimitUSD: number;
+  currentSpendUSD: number;
+  exceeded: boolean;
+  date: string;
+}
