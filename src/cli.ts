@@ -9,6 +9,8 @@ import { CostEvent, ReportOptions } from './types';
 import { filterEvents, summarize, generateInsight } from './reporters/summary';
 import { summaryToCsv } from './reporters/csv';
 import { summaryToJson } from './reporters/json';
+import { forecast } from './analytics/forecast';
+import { detectAnomalies } from './analytics/anomalies';
 
 const DEFAULT_FILE = './.llm-costs/events.ndjson';
 
@@ -194,6 +196,114 @@ program
         printTable(reportOptions, events);
         break;
     }
+  });
+
+program
+  .command('forecast')
+  .description('Forecast monthly LLM spend based on historical data')
+  .option('--file <path>', 'Path to events NDJSON file', DEFAULT_FILE)
+  .option('--format <type>', 'Output format: table, json', 'table')
+  .action(async (opts) => {
+    const events = await loadEvents(opts.file);
+    const results = forecast(events);
+
+    if (results.length === 0) {
+      console.log(chalk.yellow('Not enough data to forecast.'));
+      return;
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    console.log('');
+    console.log(chalk.bold('llm-cost-meter forecast'));
+    console.log('');
+
+    const table = new Table({
+      head: [
+        chalk.white('Feature'),
+        chalk.white('Current Spend'),
+        chalk.white('Daily Avg'),
+        chalk.white('Projected /mo'),
+        chalk.white('Trend'),
+      ],
+      style: { head: [], border: [] },
+    });
+
+    for (const r of results) {
+      const trendIcon = r.trend === 'up' ? chalk.red('^ ' + r.trendPercent + '%')
+        : r.trend === 'down' ? chalk.green('v ' + r.trendPercent + '%')
+        : chalk.gray('- flat');
+
+      table.push([
+        r.feature,
+        formatCost(r.currentSpend),
+        formatCost(r.dailyAverage),
+        chalk.bold(formatCost(r.projectedMonthly)),
+        trendIcon,
+      ]);
+    }
+
+    console.log(table.toString());
+    console.log('');
+  });
+
+program
+  .command('anomalies')
+  .description('Detect cost anomalies compared to rolling average')
+  .option('--file <path>', 'Path to events NDJSON file', DEFAULT_FILE)
+  .option('--window <days>', 'Rolling average window in days', parseInt)
+  .option('--threshold <ratio>', 'Anomaly threshold (e.g. 2.0 = 2x average)', parseFloat)
+  .option('--format <type>', 'Output format: table, json', 'table')
+  .action(async (opts) => {
+    const events = await loadEvents(opts.file);
+    const results = detectAnomalies(events, {
+      windowDays: opts.window,
+      threshold: opts.threshold,
+    });
+
+    if (results.length === 0) {
+      console.log(chalk.green('No anomalies detected.'));
+      return;
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    console.log('');
+    console.log(chalk.bold(`llm-cost-meter anomalies (${results.length} found)`));
+    console.log('');
+
+    const table = new Table({
+      head: [
+        chalk.white('Date'),
+        chalk.white('Feature'),
+        chalk.white('Cost'),
+        chalk.white('Avg'),
+        chalk.white('Ratio'),
+        chalk.white('Severity'),
+      ],
+      style: { head: [], border: [] },
+    });
+
+    for (const a of results) {
+      const severityColor = a.severity === 'high' ? chalk.red : chalk.yellow;
+      table.push([
+        a.date,
+        a.feature,
+        formatCost(a.cost),
+        formatCost(a.average),
+        severityColor(a.ratio + 'x'),
+        severityColor(a.severity),
+      ]);
+    }
+
+    console.log(table.toString());
+    console.log('');
   });
 
 program.parse();

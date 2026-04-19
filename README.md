@@ -250,6 +250,86 @@ configureBudget({
 - `resetBudget()` for testing
 - Callback errors never crash your app
 
+## LangChain Integration
+
+Track costs automatically for every LLM call in your LangChain chains, agents, and tools:
+
+```typescript
+import { LangChainCostHandler } from 'llm-cost-meter';
+
+const handler = new LangChainCostHandler({
+  feature: 'rag-pipeline',
+  userId: 'user_123',
+});
+
+const result = await model.invoke('Summarize this document', {
+  callbacks: [handler],
+});
+
+// Every LLM call in the chain is automatically tracked
+console.log(handler.events); // array of CostEvent objects
+```
+
+Works with any LangChain model (ChatOpenAI, ChatAnthropic, etc.). Requires `@langchain/core` as a peer dependency.
+
+## Next.js Integration
+
+### App Router (Route Handlers)
+
+```typescript
+import { withCostTracking } from 'llm-cost-meter';
+
+export const POST = withCostTracking({ feature: 'chat' }, async (req) => {
+  const response = await req.meter(() =>
+    openai.chat.completions.create({ ... })
+  );
+  return Response.json(response);
+});
+```
+
+### Pages Router (API Routes)
+
+```typescript
+import { createNextApiHandler } from 'llm-cost-meter';
+
+export default createNextApiHandler({ feature: 'chat' }, async (req, res) => {
+  const response = await req.meter(() =>
+    openai.chat.completions.create({ ... })
+  );
+  res.json(response);
+});
+```
+
+Both wrappers attach `req.meter()` and `req.meterStream()` with feature, userId, and sessionId pre-filled.
+
+## Cost Forecasting & Anomaly Detection
+
+### Forecast monthly spend
+
+```typescript
+import { forecast } from 'llm-cost-meter';
+
+const projections = forecast(events);
+// [{ feature: 'chat', projectedMonthly: 187.50, trend: 'up', trendPercent: 23 }, ...]
+```
+
+```bash
+npx llm-cost-meter forecast
+```
+
+### Detect cost spikes
+
+```typescript
+import { detectAnomalies } from 'llm-cost-meter';
+
+const anomalies = detectAnomalies(events, { windowDays: 7, threshold: 2.0 });
+// [{ feature: 'chat', date: '2026-04-07', cost: 12.50, average: 4.10, ratio: 3.05, severity: 'high' }]
+```
+
+```bash
+npx llm-cost-meter anomalies --threshold 2.0
+```
+
 ## Global Configuration
 
 Call `configure()` once at app startup:
