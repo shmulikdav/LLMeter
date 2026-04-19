@@ -52,6 +52,16 @@ export { ConsoleAdapter, LocalAdapter, WebhookAdapter, OTelAdapter, createAdapte
 // Re-export middleware
 export { createExpressMiddleware } from './middleware/express';
 
+// Re-export integrations
+export { LangChainCostHandler } from './integrations/langchain';
+export { withCostTracking, withMeteredAction, createNextApiHandler } from './integrations/nextjs';
+
+// Re-export analytics
+export { forecast } from './analytics/forecast';
+export type { ForecastResult } from './analytics/forecast';
+export { detectAnomalies } from './analytics/anomalies';
+export type { AnomalyResult, AnomalyOptions } from './analytics/anomalies';
+
 // ── Default config ──────────────────────────────────────────────
 
 const DEFAULT_CONFIG: GlobalConfig = {

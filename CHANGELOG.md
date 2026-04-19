@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.0 (2026-04-07)
+
+### LangChain Integration
+- New `LangChainCostHandler` callback handler
+- Tracks every LLM call in chains, agents, and tools automatically
+- Extracts model, tokens, and provider from LangChain's `LLMResult`
+- Records error events on `handleLLMError`
+- `@langchain/core` as optional peer dependency
+
+### Next.js Integration
+- `withCostTracking()` for App Router Route Handlers
+- `createNextApiHandler()` for Pages Router API Routes
+- `withMeteredAction()` for Server Actions
+- Attaches `req.meter()` and `req.meterStream()` with auto user/session extraction
+- Edge Runtime compatible
+
+### Cost Forecasting
+- New `forecast()` function — projects monthly spend from historical data
+- Per-feature and global forecasts with daily averages
+- Trend detection: up/down/flat with percentage change
+- CLI: `npx llm-cost-meter forecast`
+
+### Anomaly Detection
+- New `detectAnomalies()` — flags days where cost exceeds N times the rolling average
+- Configurable window (default: 7 days) and threshold (default: 2.0x)
+- Severity levels: normal, warning, high
+- CLI: `npx llm-cost-meter anomalies --threshold 2.0`
+- Per-feature independent tracking
+
+### Testing
+- 178 tests (up from 150)
+- New test suites: LangChain (6 tests), Next.js (7 tests), forecast (5 tests), anomalies (7 tests)
+
+---
+
 ## 0.3.0 (2026-04-07)
 
 ### Webhook Adapter
