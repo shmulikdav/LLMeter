@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 (2026-05-12)
+
+### Cloud Adapter & API Backend
+- New `CloudAdapter` — sends events to the llm-cost-meter cloud service
+- Batches events (default 50) and flushes every 5 seconds for efficiency
+- Graceful failure: retries and buffers on network errors, never blocks LLM calls
+- Simple setup: `configure({ adapters: ['local', 'cloud'], cloudApiKey: 'lm_live_...' })`
+
+### Cloud API Server
+- Self-hostable cloud backend in `cloud/server.js` (Node.js, zero dependencies)
+- REST API: POST /v1/events (ingest), GET /v1/events (query), POST /v1/keys (admin)
+- API key management with workspace isolation
+- Plan-based rate limiting (free: 1K events/mo, pro: 100K, team: 1M)
+- NDJSON file storage per workspace
+- Event filtering by feature, userId, date range
+
+### Freemium Infrastructure
+- `cloudApiKey` and `cloudEndpoint` fields in GlobalConfig
+- 'cloud' registered in adapter factory — just add to adapters array
+- Plan limits enforced server-side with clear upgrade messaging
+
+### Testing
+- 202 tests (up from 196)
+- New cloud adapter test suite: auth headers, batching, flush, error handling
+
+---
+
 ## 0.5.0 (2026-05-12)
 
 ### Prompt Versioning & Cost Comparison

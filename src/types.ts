@@ -57,6 +57,10 @@ export interface GlobalConfig {
   onError?: ErrorHandler;
   /** If true, warn to console when a model is not found in the pricing table. Default: true. */
   warnOnMissingModel: boolean;
+  /** API key for the llm-cost-meter cloud service. Get one at app.llmeter.dev */
+  cloudApiKey?: string;
+  /** Cloud API endpoint. Default: https://api.llmeter.dev */
+  cloudEndpoint?: string;
 }
 
 export interface CostAdapter {
