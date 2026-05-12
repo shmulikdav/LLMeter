@@ -47,7 +47,7 @@ export {
 } from './pricing';
 
 // Re-export adapters
-export { ConsoleAdapter, LocalAdapter, WebhookAdapter, OTelAdapter, createAdapter } from './adapters';
+export { ConsoleAdapter, LocalAdapter, WebhookAdapter, OTelAdapter, CloudAdapter, createAdapter } from './adapters';
 
 // Re-export middleware
 export { createExpressMiddleware } from './middleware/express';
@@ -81,6 +81,8 @@ const DEFAULT_CONFIG: GlobalConfig = {
   verbose: false,
   onError: undefined,
   warnOnMissingModel: true,
+  cloudApiKey: undefined,
+  cloudEndpoint: undefined,
 };
 
 let globalConfig: GlobalConfig = { ...DEFAULT_CONFIG };
@@ -93,6 +95,8 @@ function getAdapters(): CostAdapter[] {
   if (!adapterCache) {
     adapterCache = resolveAdapters(globalConfig.adapters, {
       localPath: globalConfig.localPath,
+      cloudApiKey: globalConfig.cloudApiKey,
+      cloudEndpoint: globalConfig.cloudEndpoint,
     });
   }
   return adapterCache;
