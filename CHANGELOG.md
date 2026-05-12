@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 (2026-05-12)
+
+### Prompt Versioning & Cost Comparison
+- New `promptName` and `promptVersion` fields on MeterOptions and CostEvent
+- `comparePromptVersions()` function — compares cost across prompt versions
+- CLI: `npx llm-cost-meter compare --prompt <name>` — shows cost per version with % change from baseline
+
+### Smart Caching Layer
+- New `cachedMeter()` — wraps LLM calls with in-memory LRU cache
+- Cache hit: returns instantly, records $0 cost event with `cached: true`
+- Cache miss: calls LLM, caches response, records normal cost event
+- Configurable TTL (default 5 min) and cache key
+- `getCacheStats()` — hit rate, misses, money saved
+- `resetCache()` for testing
+
+### Model Recommendation Engine
+- New `optimizeModels()` — analyzes events and recommends cheaper model alternatives
+- Cross-provider recommendations (e.g., gpt-4o → gpt-4o-mini, Opus → Sonnet)
+- Projects monthly savings per feature
+- CLI: `npx llm-cost-meter optimize` — recommendation table with savings %
+
+### Testing
+- 196 tests (up from 178)
+- New test suites: caching (6 tests), prompt comparison (5 tests), model optimizer (5 tests)
+
+---
+
 ## 0.4.0 (2026-04-07)
 
 ### LangChain Integration

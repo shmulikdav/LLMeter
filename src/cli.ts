@@ -11,6 +11,8 @@ import { summaryToCsv } from './reporters/csv';
 import { summaryToJson } from './reporters/json';
 import { forecast } from './analytics/forecast';
 import { detectAnomalies } from './analytics/anomalies';
+import { comparePromptVersions } from './analytics/compare';
+import { optimizeModels } from './analytics/optimizer';
 
 const DEFAULT_FILE = './.llm-costs/events.ndjson';
 
@@ -303,6 +305,99 @@ program
     }
 
     console.log(table.toString());
+    console.log('');
+  });
+
+program
+  .command('compare')
+  .description('Compare cost across prompt versions')
+  .option('--prompt <name>', 'Filter by prompt name')
+  .option('--file <path>', 'Path to events NDJSON file', DEFAULT_FILE)
+  .option('--format <type>', 'Output format: table, json', 'table')
+  .action(async (opts: any) => {
+    const events = await loadEvents(opts.file);
+    const results = comparePromptVersions(events, opts.prompt);
+
+    if (results.length === 0) {
+      console.log(chalk.yellow('No events with promptName/promptVersion found.'));
+      return;
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    console.log('');
+    console.log(chalk.bold('llm-cost-meter prompt comparison'));
+    console.log('');
+
+    const table = new Table({
+      head: [
+        chalk.white('Prompt'), chalk.white('Version'), chalk.white('Calls'),
+        chalk.white('Avg Tokens'), chalk.white('Avg Cost'), chalk.white('Total Cost'),
+        chalk.white('vs Baseline'),
+      ],
+      style: { head: [], border: [] },
+    });
+
+    for (const r of results) {
+      const change = r.changeFromBaseline !== undefined && r.changeFromBaseline !== 0
+        ? (r.changeFromBaseline > 0 ? chalk.red(`+${r.changeFromBaseline}%`) : chalk.green(`${r.changeFromBaseline}%`))
+        : chalk.gray('baseline');
+      table.push([
+        r.promptName, r.version, String(r.calls),
+        formatNumber(r.avgInputTokens + r.avgOutputTokens),
+        formatCost(r.avgCostPerCall), formatCost(r.totalCost), change,
+      ]);
+    }
+
+    console.log(table.toString());
+    console.log('');
+  });
+
+program
+  .command('optimize')
+  .description('Recommend cheaper models for your features')
+  .option('--file <path>', 'Path to events NDJSON file', DEFAULT_FILE)
+  .option('--format <type>', 'Output format: table, json', 'table')
+  .action(async (opts: any) => {
+    const events = await loadEvents(opts.file);
+    const results = optimizeModels(events);
+
+    if (results.length === 0) {
+      console.log(chalk.green('No cheaper model alternatives found — you\'re already optimized!'));
+      return;
+    }
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(results, null, 2));
+      return;
+    }
+
+    console.log('');
+    console.log(chalk.bold('llm-cost-meter model recommendations'));
+    console.log('');
+
+    const table = new Table({
+      head: [
+        chalk.white('Feature'), chalk.white('Current Model'), chalk.white('Current $/mo'),
+        chalk.white('Recommended'), chalk.white('Projected $/mo'), chalk.white('Savings'),
+      ],
+      style: { head: [], border: [] },
+    });
+
+    for (const r of results) {
+      table.push([
+        r.feature, r.currentModel, formatCost(r.currentMonthlyCost),
+        chalk.green(r.recommendedModel), chalk.green(formatCost(r.projectedMonthlyCost)),
+        chalk.bold.green(`-${r.savingsPercent}% ($${r.savingsUSD.toFixed(2)}/mo)`),
+      ]);
+    }
+
+    console.log(table.toString());
+    console.log('');
+    console.log(chalk.gray('Note: Test quality before switching models. Lower cost does not always mean equivalent results.'));
     console.log('');
   });
 
