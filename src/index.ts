@@ -61,6 +61,15 @@ export { forecast } from './analytics/forecast';
 export type { ForecastResult } from './analytics/forecast';
 export { detectAnomalies } from './analytics/anomalies';
 export type { AnomalyResult, AnomalyOptions } from './analytics/anomalies';
+export { comparePromptVersions } from './analytics/compare';
+export type { VersionComparison } from './analytics/compare';
+export { optimizeModels } from './analytics/optimizer';
+export type { ModelRecommendation } from './analytics/optimizer';
+
+// Re-export cache
+import { globalCache, hashKey } from './cache';
+export { globalCache, LRUCache } from './cache';
+export type { CacheStats } from './cache';
 
 // ── Default config ──────────────────────────────────────────────
 
@@ -288,6 +297,8 @@ function buildEvent(
     latencyMs,
     status,
     errorMessage,
+    promptName: options.promptName,
+    promptVersion: options.promptVersion,
     feature: options.feature,
     userId: options.userId,
     sessionId: options.sessionId,
@@ -370,6 +381,79 @@ export async function flush(): Promise<void> {
   await Promise.all(
     adapters.map((adapter) => (adapter.flush ? adapter.flush() : Promise.resolve()))
   );
+}
+
+/**
+ * Wrap an LLM call with in-memory caching. On cache hit, returns the
+ * cached response instantly and records a $0 cost event with `cached: true`.
+ *
+ * @example
+ * ```typescript
+ * const response = await cachedMeter(
+ *   () => openai.chat.completions.create({ model: 'gpt-4o', messages }),
+ *   { feature: 'faq', ttlMs: 3600000 }
+ * );
+ * ```
+ */
+export async function cachedMeter<T>(
+  fn: () => Promise<T>,
+  options: MeterOptions & { ttlMs?: number; cacheKey?: string } = {}
+): Promise<T> {
+  const ttl = options.ttlMs ?? 300000; // 5 minutes default
+  const key = options.cacheKey ?? hashKey(fn.toString());
+
+  const cached = globalCache.get(key);
+  if (cached !== undefined) {
+    // Cache hit — record $0 cost event
+    const provider = detectProvider(cached);
+    const model = extractModel(cached);
+    const event = buildEvent(provider, model, 0, 0, 0, options, globalConfig.defaultTags);
+    event.cached = true;
+    event.totalCostUSD = 0;
+    event.inputCostUSD = 0;
+    event.outputCostUSD = 0;
+    stats.eventsTracked++;
+    const adapters = getAdapters();
+    dispatchEvent(event, adapters, options.awaitWrites ?? false, globalConfig.onError, globalConfig.verbose);
+    globalCache.trackSavings(event.totalCostUSD); // will track from missed call
+    return cached as T;
+  }
+
+  // Cache miss — call and cache
+  const startTime = Date.now();
+  const response = await fn();
+  const latencyMs = Date.now() - startTime;
+
+  const provider = detectProvider(response);
+  const model = extractModel(response);
+  const { inputTokens, outputTokens } = extractTokens(response, provider);
+  const { inputCostUSD, outputCostUSD, totalCostUSD } = calculateCost(
+    provider, model, inputTokens, outputTokens
+  );
+
+  globalCache.set(key, response, ttl);
+  globalCache.trackSavings(totalCostUSD); // track what future hits will save
+
+  const event = buildEvent(provider, model, inputTokens, outputTokens, latencyMs, options, globalConfig.defaultTags);
+  stats.eventsTracked++;
+  const adapters = getAdapters();
+  await dispatchEvent(event, adapters, options.awaitWrites ?? false, globalConfig.onError, globalConfig.verbose);
+
+  return response;
+}
+
+/**
+ * Get cache statistics (hits, misses, hit rate, money saved).
+ */
+export function getCacheStats() {
+  return globalCache.getStats();
+}
+
+/**
+ * Reset the cache. Useful for testing.
+ */
+export function resetCache() {
+  globalCache.reset();
 }
 
 /**

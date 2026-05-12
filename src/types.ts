@@ -12,6 +12,9 @@ export interface CostEvent {
   latencyMs: number;
   status?: 'success' | 'error';
   errorMessage?: string;
+  cached?: boolean;
+  promptName?: string;
+  promptVersion?: string;
   feature?: string;
   userId?: string;
   sessionId?: string;
@@ -27,6 +30,8 @@ export interface MeterOptions {
   sessionId?: string;
   env?: string;
   tags?: Record<string, string>;
+  promptName?: string;
+  promptVersion?: string;
   /** If true, await adapter writes before returning. Default: false (fire-and-forget). */
   awaitWrites?: boolean;
 }
